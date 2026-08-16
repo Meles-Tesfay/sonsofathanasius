@@ -1,0 +1,54 @@
+{
+  "brand": {
+    "title": "Sons of Athanasius",
+    "subtitle": "Orthodox Apologetics",
+    "tagline": "Ethiopian Orthodox Tewahedo Church Apologetics & Digital Library"
+  },
+  "nav": {
+    "home": "Home",
+    "categories": "Categories",
+    "christianity": "Christianity",
+    "islamic": "Islamic Dialogue",
+    "testimonies": "Testimonies",
+    "atheism": "Atheism & Reason",
+    "spiritualTeachings": "Spiritual Teachings",
+    "about": "About Us",
+    "contact": "Contact",
+    "admin": "Admin"
+  },
+  "actions": {
+    "readMore": "Read Article",
+    "downloadPdf": "Download PDF",
+    "search": "Search articles or scriptures... (Ctrl + K)",
+    "searchPlaceholder": "E.g., Deity of Christ, Trinity, John 5:31...",
+    "fallbackNotice": "This article is not yet translated into English. Displaying the original Amharic version.",
+    "share": "Share",
+    "playAudio": "Play Audio",
+    "pauseAudio": "Pause"
+  },
+  "home": {
+    "heroTitle": "Welcome in Christ!",
+    "heroQuote": "\"This is our reply to those who seek to confuse us.\"",
+    "heroQuoteAuthor": "St. Gregory of Nazianzus",
+    "heroSubtitle": "Explore early church patristics, theological defenses, and apostolic teachings of the Ethiopian Orthodox Tewahedo Church.",
+    "pillarsTitle": "Our Mission Pillars",
+    "pillar1Title": "Faith Defense",
+    "pillar1Desc": "Providing biblically and historically grounded answers to theological objections and questions.",
+    "pillar2Title": "Authentic Teaching",
+    "pillar2Desc": "Presenting clear, apostolic explanations of Orthodox Christianity to seekers and dialogue partners.",
+    "pillar3Title": "Youth Empowerment",
+    "pillar3Desc": "Equipping youth and believers with solid patristic knowledge for modern dialogues and digital discourse.",
+    "dailyReaderTitle": "Daily Lectionary & Saints",
+    "dailyReading": "Daily Scripture Reading",
+    "dailySaint": "Saint of the Day",
+    "dailyQuote": "Patristic Quote",
+    "latestArticles": "Latest Articles"
+  },
+  "footer": {
+    "aboutText": "Sons of Athanasius is dedicated to preserving and proclaiming the ancient apostolic faith of the Ethiopian Orthodox Tewahedo Church.",
+    "quickLinks": "Quick Links",
+    "contactInfo": "Contact Information",
+    "scripture": "\"Jesus Christ is the same yesterday and today and forever.\" (Hebrews 13:8)",
+    "rights": "All rights reserved."
+  }
+}

@@ -1,0 +1,29 @@
+name: CI Quality Gate
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main, staging]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install Monorepo Dependencies
+        run: npm ci
+
+      - name: Build & Type-Check Backend
+        run: npm run build:server
+
+      - name: Build & Type-Check Frontend
+        run: npm run build:client

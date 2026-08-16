@@ -1,0 +1,54 @@
+{
+  "brand": {
+    "title": "Ilmaan Ataanaatewoos",
+    "subtitle": "Eegumsa Amantii Ortodoksii",
+    "tagline": "Kuusaa Kitaabaa fi Eegumsa Amantii Waldaa Qulqulleettii Ortodoksii Tawaahidoo Itoophiyaa"
+  },
+  "nav": {
+    "home": "Fuula Duraa",
+    "categories": "Ramaddiiwwan",
+    "christianity": "Waa'ee Kiristaanummaa",
+    "islamic": "Waa'ee Islaamummaa",
+    "testimonies": "Dhugaa Ba'umsa",
+    "atheism": "Waa'ee Waaqayyo Maleeyyii",
+    "spiritualTeachings": "Barnoota Afuuraa",
+    "about": "Waa'ee Keenya",
+    "contact": "Nu Qunnamaa",
+    "admin": "Gulaalaa"
+  },
+  "actions": {
+    "readMore": "Dubbisi",
+    "downloadPdf": "PDF Buufadhu",
+    "search": "Barreeffama barbaadi... (Ctrl + K)",
+    "searchPlaceholder": "Fkn: Waaqummaa Kiristoos, Sillaasee...",
+    "fallbackNotice": "Barreeffamni kun afaan kanaan hin jiru. Qophii Amaariffaa argitu.",
+    "share": "Hiri",
+    "playAudio": "Dhaggeeffadhu",
+    "pauseAudio": "Dhaabi"
+  },
+  "home": {
+    "heroTitle": "Baga Nagaan Dhuftan!",
+    "heroQuote": "\"Deebiin keenya warra nu burjaajessuu barbaadaniif kanadha.\"",
+    "heroQuoteAuthor": "Qulqulluu Gorgoriyoos Isa Inzinaazisuu",
+    "heroSubtitle": "Barnoota abbootii durii fi deebii amantii Ortodoksii Tawaahidoo bakka tokkotti argadhaa.",
+    "pillarsTitle": "Kaayyoo Tajaajila Keenyaa",
+    "pillar1Title": "Deebii Amantii",
+    "pillar1Desc": "Gaaffilee marii amantii irratti ka'aniif deebii kitaaba qulqulluu fi barnoota abbootii irratti hundaa'e kennuu.",
+    "pillar2Title": "Barnoota Dhugaa Beeksisuu",
+    "pillar2Desc": "Warra barnoota Kiristaanummaa dhugaa baruu barbaadaniif ibsa ifaa dhiyeessuu.",
+    "pillar3Title": "Dargaggoota Ijaaruu",
+    "pillar3Desc": "Gaaffilee fi mormiiwwan miidiyaa hawaasaa irratti ka'aniif deebii kennuuf dargaggoota qopheessuu.",
+    "dailyReaderTitle": "Dubbisa Guyyaa fi Qulqulloota",
+    "dailyReading": "Dubbisa Guyyaa",
+    "dailySaint": "Qulqulluu Guyyaa",
+    "dailyQuote": "Mammaksa Abbootii",
+    "latestArticles": "Barreeffamoota Haaraa"
+  },
+  "footer": {
+    "aboutText": "Ilmaan Ataanaatewoos barnoota abbootii durii Waldaa Ortodoksii Tawaahidoo Itoophiyaa eeguuf kan hundeeffamedha.",
+    "quickLinks": "Geessituuwwan Ariifachiisoo",
+    "contactInfo": "Teessoo Qunnamtii",
+    "scripture": "\"Yesuus Kiristoos kaleessas, har'as, bara baraanis isa duriiti.\" (Ibroota 13:8)",
+    "rights": "Mirgi hunduu eegamaadha."
+  }
+}

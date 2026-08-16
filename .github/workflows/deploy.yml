@@ -1,0 +1,36 @@
+name: Deploy to Yegara Host
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Build Frontend SPA
+        run: npm run build:client
+
+      - name: Deploy Frontend to Yegara (FTP)
+        uses: SamKirkland/FTP-Deploy-Action@v4.4.0
+        with:
+          server: ${{ secrets.YEGARA_FTP_SERVER }}
+          username: ${{ secrets.YEGARA_FTP_USERNAME }}
+          password: ${{ secrets.YEGARA_FTP_PASSWORD }}
+          local-dir: ./client/dist/
+          server-dir: /public_html/
+          dangerous-clean-slate: false
+
+      - name: Build Backend API Bundle
+        run: npm run build:server

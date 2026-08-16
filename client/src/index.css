@@ -1,0 +1,88 @@
+
+@import "tailwindcss";
+
+/* Self-hosted Typography */
+@import "@fontsource/noto-serif-ethiopic/400.css";
+@import "@fontsource/noto-serif-ethiopic/700.css";
+@import "@fontsource/noto-sans-ethiopic/400.css";
+@import "@fontsource/noto-sans-ethiopic/700.css";
+@import "@fontsource/cinzel/400.css";
+@import "@fontsource/cinzel/700.css";
+@import "@fontsource/plus-jakarta-sans/400.css";
+@import "@fontsource/plus-jakarta-sans/600.css";
+@import "@fontsource/plus-jakarta-sans/700.css";
+
+@theme {
+  --color-sacred-crimson: #7a0c0c;
+  --color-sacred-crimson-hover: #961212;
+  --color-light-gold: #d4af37;
+  --color-light-gold-muted: #c5a028;
+  --color-gold-glow: rgba(212, 175, 55, 0.2);
+
+  --color-bg-ivory: #faf8f5;
+  --color-surface-white: #ffffff;
+  --color-text-primary: #1c1917;
+  --color-text-muted: #57534e;
+  --color-border-subtle: #e7e5e4;
+
+  --color-bg-midnight: #0c0a09;
+  --color-surface-dark: #1c1917;
+  --color-text-dark-primary: #f5f5f4;
+  --color-text-dark-muted: #a8a29e;
+  --color-border-dark: #292524;
+
+  --font-ethiopic-serif: "Noto Serif Ethiopic", serif;
+  --font-ethiopic-sans: "Noto Sans Ethiopic", sans-serif;
+  --font-latin-serif: "Cinzel", serif;
+  --font-latin-sans: "Plus Jakarta Sans", sans-serif;
+}
+
+:root {
+  font-family: var(--font-ethiopic-sans), system-ui, -apple-system, sans-serif;
+}
+
+html.font-latin {
+  font-family: var(--font-latin-sans), system-ui, -apple-system, sans-serif;
+}
+
+html.font-ethiopic {
+  font-family: var(--font-ethiopic-sans), system-ui, -apple-system, sans-serif;
+}
+
+/* Glassmorphic utilities */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(212, 175, 55, 0.2);
+}
+
+.dark .glass-panel {
+  background: rgba(28, 25, 23, 0.85);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(212, 175, 55, 0.15);
+}
+
+/* TipTap & Scripture citation badges */
+.scripture-citation, [data-ref] {
+  color: var(--color-sacred-crimson);
+  background: rgba(122, 12, 12, 0.08);
+  border: 1px solid rgba(122, 12, 12, 0.2);
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.375rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-block;
+  transition: all 0.15s ease-in-out;
+}
+
+.dark .scripture-citation, .dark [data-ref] {
+  color: #f59e0b;
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.25);
+}
+
+.scripture-citation:hover, [data-ref]:hover {
+  background: rgba(122, 12, 12, 0.18);
+}

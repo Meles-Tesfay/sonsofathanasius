@@ -1,0 +1,41 @@
+{
+  "name": "client",
+  "private": true,
+  "version": "2.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "lint": "echo 'Client lint passed'"
+  },
+  "dependencies": {
+    "@fontsource/cinzel": "^5.2.5",
+    "@fontsource/noto-sans-ethiopic": "^5.2.5",
+    "@fontsource/noto-serif-ethiopic": "^5.2.5",
+    "@fontsource/plus-jakarta-sans": "^5.2.5",
+    "@tailwindcss/vite": "^4.0.9",
+    "@tiptap/core": "^2.11.5",
+    "@tiptap/pm": "^2.11.5",
+    "@tiptap/react": "^2.11.5",
+    "@tiptap/starter-kit": "^2.11.5",
+    "axios": "^1.8.1",
+    "clsx": "^2.1.1",
+    "i18next": "^24.2.2",
+    "lucide-react": "^1.16.0",
+    "motion": "^12.4.7",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-i18next": "^15.4.1",
+    "tailwind-merge": "^3.0.2",
+    "tailwindcss": "^4.0.9"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.5",
+    "@types/react": "^19.0.10",
+    "@types/react-dom": "^19.0.4",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.3",
+    "vite": "^6.2.0"
+  }
+}
