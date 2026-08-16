@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "647a512e-5d17-485d-914c-0c5228c0e17a",
+  "id": "7bce53ea-3733-492f-b357-87c8f817a4a4",
   "prevId": "00000000-0000-0000-0000-000000000000",
   "tables": {
     "categories": {
@@ -49,8 +49,29 @@
           "notNull": false,
           "autoincrement": false
         },
-        "description": {
-          "name": "description",
+        "description_en": {
+          "name": "description_en",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "description_am": {
+          "name": "description_am",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "description_om": {
+          "name": "description_om",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "description_ti": {
+          "name": "description_ti",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

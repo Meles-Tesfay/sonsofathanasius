@@ -23,7 +23,10 @@ export const categories = mysqlTable('categories', {
   nameAm: varchar('name_am', { length: 150 }), // Amharic
   nameOm: varchar('name_om', { length: 150 }), // Afan Oromo
   nameTi: varchar('name_ti', { length: 150 }), // Tigrigna
-  description: text('description'),
+  descriptionEn: text('description_en'),
+  descriptionAm: text('description_am'),
+  descriptionOm: text('description_om'),
+  descriptionTi: text('description_ti'),
   sortOrder: int('sort_order').default(0),
   isActive: tinyint('is_active').default(1),
   createdAt: timestamp('created_at').defaultNow(),

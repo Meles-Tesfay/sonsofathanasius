@@ -5,7 +5,10 @@ export interface Category {
   nameAm?: string;
   nameOm?: string;
   nameTi?: string;
-  description?: string;
+  descriptionEn?: string;
+  descriptionAm?: string;
+  descriptionOm?: string;
+  descriptionTi?: string;
   sortOrder: number;
   isActive: number;
 }

@@ -7,7 +7,10 @@ export interface CategoryDTO {
   nameAm: string | null;
   nameOm: string | null;
   nameTi: string | null;
-  description: string | null;
+  descriptionEn: string | null;
+  descriptionAm: string | null;
+  descriptionOm: string | null;
+  descriptionTi: string | null;
   sortOrder: number;
 }
 
