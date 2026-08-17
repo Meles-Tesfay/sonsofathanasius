@@ -1,12 +1,18 @@
 import { Router, Request, Response } from 'express';
 import { sendSuccess } from '../utils/response.js';
 import { config } from '../config/index.js';
+import { getCacheMetrics } from '../cache/metrics.js';
 import docsRouter from './docs.js';
+
+import searchRouter from './search.js';
 
 const router = Router();
 
 // 1. Interactive OpenAPI Swagger Documentation
 router.use('/', docsRouter);
+
+// 2. Full-Text Search Engine Route
+router.use('/search', searchRouter);
 
 /**
  * Health Check & API Status Endpoint
@@ -20,6 +26,20 @@ router.get('/health', (_req: Request, res: Response) => {
     environment: config.nodeEnv,
     timestamp: new Date().toISOString(),
     documentation: '/api/v1/docs',
+    cache: getCacheMetrics(),
+  });
+});
+
+/**
+ * Cache & Performance Metrics Endpoint
+ * GET /api/v1/metrics
+ */
+router.get('/metrics', (_req: Request, res: Response) => {
+  sendSuccess(res, {
+    cache: getCacheMetrics(),
+    memoryUsage: process.memoryUsage(),
+    uptimeSeconds: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
   });
 });
 

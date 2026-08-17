@@ -42,9 +42,13 @@ app.use(notFoundHandler);
 // 7. Centralized Error Handler (Express 5 native async support)
 app.use(errorHandler);
 
+import { initializeSearchIndex } from './services/searchService.js';
+
 // 8. Server Boot
-const server = app.listen(config.port, () => {
+const server = app.listen(config.port, async () => {
   console.log(`☦ [Sons of Athanasius API] Server running on http://localhost:${config.port} (${config.nodeEnv})`);
+  // Warm up in-memory full-text search index
+  await initializeSearchIndex();
 });
 
 // Graceful Shutdown

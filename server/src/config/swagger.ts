@@ -39,7 +39,7 @@ export const openApiSpec = {
       get: {
         tags: ['System'],
         summary: 'Health Check & Service Status',
-        description: 'Returns the current operating status, API version, and environment.',
+        description: 'Returns the current operating status, API version, environment, and cache metrics.',
         responses: {
           '200': {
             description: 'System is healthy and operational',
@@ -48,6 +48,72 @@ export const openApiSpec = {
                 schema: {
                   $ref: '#/components/schemas/HealthResponse',
                 },
+              },
+            },
+          },
+        },
+      },
+    },
+    '/search': {
+      get: {
+        tags: ['Search'],
+        summary: 'Full-Text In-Memory Search (Amharic Normalized)',
+        description:
+          'Searches through published articles using MiniSearch with Ethiopic phonetic homophone normalization (ሀ↔ሐ↔ኀ, ሠ↔ሰ, ዐ↔አ, ጸ↔ፀ), prefix matching, and typo tolerance.',
+        parameters: [
+          {
+            name: 'q',
+            in: 'query',
+            required: true,
+            description: 'Search query string (e.g. "ሥላሴ", "ክርስቶስ", "Trinity")',
+            schema: { type: 'string', example: 'ሥላሴ' },
+          },
+          {
+            name: 'lang',
+            in: 'query',
+            required: false,
+            description: 'Content language filter (default: "am")',
+            schema: { type: 'string', enum: ['am', 'en', 'om', 'ti'], default: 'am' },
+          },
+          {
+            name: 'category',
+            in: 'query',
+            required: false,
+            description: 'Optional category slug filter (e.g. "christianity")',
+            schema: { type: 'string', example: 'christianity' },
+          },
+          {
+            name: 'limit',
+            in: 'query',
+            required: false,
+            description: 'Maximum number of results to return (max: 50, default: 20)',
+            schema: { type: 'integer', minimum: 1, maximum: 50, default: 20 },
+          },
+        ],
+        responses: {
+          '200': {
+            description: 'Matching search results ordered by BM25 relevance score',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean', example: true },
+                    data: {
+                      type: 'array',
+                      items: { $ref: '#/components/schemas/SearchResultItem' },
+                    },
+                    meta: { $ref: '#/components/schemas/ResponseMeta' },
+                  },
+                },
+              },
+            },
+          },
+          '400': {
+            description: 'Invalid query parameters',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ErrorResponse' },
               },
             },
           },
@@ -197,6 +263,31 @@ export const openApiSpec = {
           pdfEnabled: { type: 'boolean', example: true },
           viewCount: { type: 'integer', example: 342 },
           publishedAt: { type: 'string', format: 'date-time' },
+        },
+      },
+      SearchResultItem: {
+        type: 'object',
+        properties: {
+          id: { type: 'integer', example: 1 },
+          contentId: { type: 'integer', example: 1 },
+          title: { type: 'string', example: 'የኢየሱስ ክርስቶስ አምላክነት በቅዱሳት መጻሕፍት ብርሃን' },
+          slug: { type: 'string', example: 'deity-of-jesus-christ-scripture' },
+          summary: { type: 'string', example: 'ጥናታዊ የዕቅበተ እምነት ማብራሪያ።' },
+          coverImage: { type: 'string', example: 'https://images.unsplash.com/photo-1548625361-195fe578ae5a' },
+          authorName: { type: 'string', example: 'ዘአትናቴዎስ' },
+          categorySlug: { type: 'string', example: 'christianity' },
+          categoryName: { type: 'string', example: 'በእንተ ክርስትና' },
+          langCode: { type: 'string', example: 'am' },
+          publishedAt: { type: 'string', format: 'date-time' },
+          score: { type: 'number', example: 12.45 },
+          match: {
+            type: 'object',
+            additionalProperties: {
+              type: 'array',
+              items: { type: 'string' },
+            },
+            example: { 'ስላሴ': ['title', 'bodySearchable'] },
+          },
         },
       },
     },

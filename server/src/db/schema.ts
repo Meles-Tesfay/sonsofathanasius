@@ -67,7 +67,7 @@ export const contentTranslations = mysqlTable('content_translations', {
   slug: varchar('slug', { length: 255 }).notNull(),
   summary: text('summary'),
   body: mediumtext('body').notNull(), // Full Sanitized HTML (up to 16MB)
-  bodySearchable: text('body_searchable').notNull(), // Stripped Plain Text (for FULLTEXT compliance)
+  bodySearchable: mediumtext('body_searchable').notNull(), // Stripped Plain Text (up to 16MB for full search indexing)
 }, (table) => [
   uniqueIndex('uniq_content_lang').on(table.contentId, table.langCode),
   uniqueIndex('uniq_slug_lang').on(table.slug, table.langCode),
