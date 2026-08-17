@@ -107,7 +107,35 @@ export const contentTags = mysqlTable('content_tags', {
 ]);
 
 // ==========================================
-// 6. RELATIONS
+// 6. ADMINS & SESSIONS TABLES (DB-Backed Auth)
+// ==========================================
+export const admins = mysqlTable('admins', {
+  id: int('id').autoincrement().primaryKey(),
+  username: varchar('username', { length: 100 }).notNull().unique(),
+  email: varchar('email', { length: 255 }).notNull().unique(),
+  passwordHash: varchar('password_hash', { length: 255 }).notNull(),
+  fullName: varchar('full_name', { length: 150 }),
+  role: mysqlEnum('role', ['superadmin', 'editor', 'translator']).default('editor'),
+  isActive: tinyint('is_active').default(1),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow().onUpdateNow(),
+});
+
+export const adminSessions = mysqlTable('admin_sessions', {
+  id: varchar('id', { length: 128 }).primaryKey(), // Cryptographically secure session token
+  adminId: int('admin_id').notNull().references(() => admins.id, { onDelete: 'cascade' }),
+  ipAddress: varchar('ip_address', { length: 45 }),
+  userAgent: text('user_agent'),
+  expiresAt: timestamp('expires_at').notNull(),
+  createdAt: timestamp('created_at').defaultNow(),
+  lastActiveAt: timestamp('last_active_at').defaultNow().onUpdateNow(),
+}, (table) => [
+  index('idx_session_admin').on(table.adminId),
+  index('idx_session_expires').on(table.expiresAt),
+]);
+
+// ==========================================
+// 7. RELATIONS
 // ==========================================
 export const categoriesRelations = relations(categories, ({ many }) => ({
   contents: many(content),
@@ -149,5 +177,16 @@ export const contentTagsRelations = relations(contentTags, ({ one }) => ({
   tag: one(tags, {
     fields: [contentTags.tagId],
     references: [tags.id],
+  }),
+}));
+
+export const adminsRelations = relations(admins, ({ many }) => ({
+  sessions: many(adminSessions),
+}));
+
+export const adminSessionsRelations = relations(adminSessions, ({ one }) => ({
+  admin: one(admins, {
+    fields: [adminSessions.adminId],
+    references: [admins.id],
   }),
 }));

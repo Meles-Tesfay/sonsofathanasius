@@ -15,7 +15,14 @@ export const securityHeaders = helmet({
       imgSrc: ["'self'", 'data:', 'https:', 'blob:'],
       mediaSrc: ["'self'", 'https:', 'blob:'],
       frameSrc: ["'self'", 'https://www.youtube.com', 'https://youtube.com', 'https://player.vimeo.com', 'https://w.soundcloud.com'],
-      connectSrc: ["'self'", config.clientUrl, 'https://www.sonsofathanasius.com', 'https://sonsofathanasius.com'],
+      connectSrc: [
+        "'self'",
+        config.clientUrl,
+        'https://sonsofathanasius.com',
+        'https://www.sonsofathanasius.com',
+        'https://api.sonsofathanasius.com',
+        'https://admin.sonsofathanasius.com',
+      ],
       objectSrc: ["'none'"],
       upgradeInsecureRequests: config.nodeEnv === 'production' ? [] : null,
     },
@@ -27,35 +34,49 @@ export const securityHeaders = helmet({
   referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
 });
 
-// 2. Allowed CORS Origins
-const allowedOrigins = [
-  config.clientUrl,
-  'https://www.sonsofathanasius.com',
+// 2. Explicit Whitelist for Production Origins (Blocks Subdomain Takeover Vectors)
+const ALLOWED_PRODUCTION_ORIGINS = new Set([
   'https://sonsofathanasius.com',
-  'http://localhost:5173',
-  'http://localhost:3000',
-  'http://127.0.0.1:5173',
-  'http://127.0.0.1:3000',
-];
+  'https://www.sonsofathanasius.com',
+  'https://api.sonsofathanasius.com',
+  'https://admin.sonsofathanasius.com',
+]);
+
+// Local development origin pattern
+const LOCAL_DEV_REGEX = /^http:\/\/(localhost|127\.0\.0\.1|([a-zA-Z0-9-]+\.)*localhost)(:\d+)?$/;
+
+export const isAllowedOrigin = (origin?: string): boolean => {
+  if (!origin) return true; // Allow non-browser requests (e.g. cURL, cron tasks, server-to-server)
+
+  // 1. Check explicit production origin whitelist
+  if (ALLOWED_PRODUCTION_ORIGINS.has(origin)) return true;
+
+  // 2. Check local development host patterns
+  if (LOCAL_DEV_REGEX.test(origin)) return true;
+
+  // 3. Check explicitly configured client URL
+  if (config.clientUrl && origin === config.clientUrl) return true;
+
+  return false;
+};
 
 export const corsMiddleware = cors({
   origin: (origin, callback) => {
-    // Allow non-browser tools (e.g. curl, server-to-server) or matching allowed origins
-    if (!origin || allowedOrigins.includes(origin)) {
+    if (isAllowedOrigin(origin)) {
       callback(null, true);
     } else {
-      callback(new Error(`Origin ${origin} is not allowed by CORS policy.`));
+      callback(new Error(`Origin ${origin} is not permitted by CORS policy.`));
     }
   },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'X-Cache'],
   exposedHeaders: ['X-Cache', 'Content-Disposition'],
-  credentials: true,
+  credentials: true, // Required for secure cookie transmission
   maxAge: 86400, // 24 hours
 });
 
 // 3. HTTP Methods Allowlist Middleware
-const ALLOWED_METHODS = new Set(['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'HEAD']);
+const ALLOWED_METHODS = new Set(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD']);
 
 export function methodAllowlist(req: Request, res: Response, next: NextFunction) {
   if (!ALLOWED_METHODS.has(req.method)) {

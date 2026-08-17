@@ -1,4 +1,5 @@
 import express, { Request, Response } from 'express';
+import cookieParser from 'cookie-parser';
 import { config } from './config/index.js';
 import { securityHeaders, corsMiddleware, methodAllowlist } from './middleware/security.js';
 import { generalLimiter } from './middleware/rateLimiter.js';
@@ -12,7 +13,8 @@ app.use(securityHeaders);
 app.use(corsMiddleware);
 app.use(methodAllowlist);
 
-// 2. Body Parsing Middleware
+// 2. Cookie & Body Parsing Middleware
+app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
