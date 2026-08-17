@@ -6,11 +6,11 @@ import fs from 'fs';
  * - JPEG: Starts with 0xFF 0xD8 0xFF
  */
 export async function verifyImageMagicBytes(filePath: string): Promise<{ isValid: boolean; format?: 'webp' | 'jpeg' }> {
+  let handle: fs.promises.FileHandle | null = null;
   try {
-    const handle = await fs.promises.open(filePath, 'r');
+    handle = await fs.promises.open(filePath, 'r');
     const buffer = Buffer.alloc(12);
     await handle.read(buffer, 0, 12, 0);
-    await handle.close();
 
     // 1. Check JPEG magic bytes: FF D8 FF
     if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
@@ -27,5 +27,13 @@ export async function verifyImageMagicBytes(filePath: string): Promise<{ isValid
     return { isValid: false };
   } catch {
     return { isValid: false };
+  } finally {
+    if (handle) {
+      try {
+        await handle.close();
+      } catch {
+        // Ignore handle close error
+      }
+    }
   }
 }

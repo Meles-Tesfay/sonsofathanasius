@@ -528,7 +528,7 @@ function resolveCategoryName(row: {
 /**
  * Eagerly pre-generate static PDFs for all published translations of an article
  */
-export async function eagerGenerateArticlePdfs(contentId: number): Promise<void> {
+export async function eagerGenerateArticlePdfs(contentId: number, force: boolean = false): Promise<void> {
   try {
     const rows = await db
       .select({
@@ -547,6 +547,7 @@ export async function eagerGenerateArticlePdfs(contentId: number): Promise<void>
         summary: contentTranslations.summary,
         body: contentTranslations.body,
         langCode: contentTranslations.langCode,
+        pdfFilePath: contentTranslations.pdfFilePath,
       })
       .from(content)
       .innerJoin(categories, eq(content.categoryId, categories.id))
@@ -561,7 +562,17 @@ export async function eagerGenerateArticlePdfs(contentId: number): Promise<void>
       return;
     }
 
+    let generatedCount = 0;
+
     for (const row of rows) {
+      // Skip generation if file already exists on disk and force is false
+      if (!force && row.pdfFilePath) {
+        const existingDiskPath = path.join(config.storage.pdfDir, path.basename(row.pdfFilePath));
+        if (fs.existsSync(existingDiskPath)) {
+          continue;
+        }
+      }
+
       const categoryName = resolveCategoryName(row);
 
       await generateAndSaveArticlePdf({
@@ -576,9 +587,13 @@ export async function eagerGenerateArticlePdfs(contentId: number): Promise<void>
         publishedAt: row.publishedAt,
         updatedAt: row.updatedAt,
       });
+
+      generatedCount++;
     }
 
-    console.log(`📄 [PDFService] Eagerly generated ${rows.length} multilingual PDFs for article #${contentId}`);
+    if (generatedCount > 0) {
+      console.log(`📄 [PDFService] Eagerly generated ${generatedCount} multilingual PDFs for article #${contentId}`);
+    }
   } catch (err) {
     console.error(`⚠️ [PDFService] Failed to eager-generate PDFs for article #${contentId}:`, err);
   }
@@ -603,14 +618,17 @@ export async function reconcileMissingPdfs(): Promise<void> {
     const missingArticleIds = new Set<number>();
 
     for (const row of publishedRows) {
-      const isMissingOnDisk = !row.pdfFilePath || !fs.existsSync(path.join(config.storage.uploadsDir, '..', row.pdfFilePath));
+      const isMissingOnDisk =
+        !row.pdfFilePath ||
+        !fs.existsSync(path.join(config.storage.pdfDir, path.basename(row.pdfFilePath)));
+
       if (isMissingOnDisk) {
         missingArticleIds.add(row.contentId);
       }
     }
 
     for (const contentId of missingArticleIds) {
-      await eagerGenerateArticlePdfs(contentId);
+      await eagerGenerateArticlePdfs(contentId, false);
       backfilledCount++;
     }
 
