@@ -20,4 +20,14 @@ export const config = {
     ttl: Number(process.env.CACHE_DEFAULT_TTL) || 600,
   },
   jwtSecret: process.env.JWT_SECRET || 'default_secret_key_change_me',
+  storage: {
+    uploadsDir: process.env.UPLOADS_DIR || path.resolve(process.cwd(), 'uploads'),
+    get coversDir(): string {
+      return path.join(this.uploadsDir, 'covers');
+    },
+    get pdfDir(): string {
+      return path.join(this.uploadsDir, 'pdf');
+    },
+    fontsDir: process.env.FONTS_DIR || path.resolve(process.cwd(), 'assets/fonts'),
+  },
 };

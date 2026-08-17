@@ -1,5 +1,6 @@
 import express, { Request, Response } from 'express';
 import cookieParser from 'cookie-parser';
+import fs from 'fs';
 import { config } from './config/index.js';
 import { securityHeaders, corsMiddleware, methodAllowlist } from './middleware/security.js';
 import { generalLimiter } from './middleware/rateLimiter.js';
@@ -18,14 +19,17 @@ app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// 3. Global Rate Limiter for API
+// 3. Static Uploads File Serving (Local dev parity with production Apache web root)
+app.use('/uploads', express.static(config.storage.uploadsDir));
+
+// 4. Global Rate Limiter for API
 app.use('/api/', generalLimiter);
 
-// 4. API Documentation Alias & API v1 Master Router
+// 5. API Documentation Alias & API v1 Master Router
 app.get('/api/docs', (_req: Request, res: Response) => res.redirect('/api/v1/docs'));
 app.use('/api/v1', apiRouter);
 
-// 5. Root route
+// 6. Root route
 app.get('/', (_req: Request, res: Response) => {
   res.json({
     name: 'ደቂቀ አትናቴዎስ (Sons of Athanasius) API',
@@ -36,19 +40,32 @@ app.get('/', (_req: Request, res: Response) => {
   });
 });
 
-// 6. Global 404 Handler
+// 7. Global 404 Handler
 app.use(notFoundHandler);
 
-// 7. Centralized Error Handler (Express 5 native async support)
+// 8. Centralized Error Handler (Express 5 native async support)
 app.use(errorHandler);
 
 import { initializeSearchIndex } from './services/searchService.js';
+import { reconcileMissingPdfs } from './services/pdfService.js';
 
-// 8. Server Boot
+// 9. Server Boot
 const server = app.listen(config.port, async () => {
   console.log(`☦ [Sons of Athanasius API] Server running on http://localhost:${config.port} (${config.nodeEnv})`);
+
+  // Ensure upload directories exist on disk
+  if (!fs.existsSync(config.storage.coversDir)) {
+    fs.mkdirSync(config.storage.coversDir, { recursive: true });
+  }
+  if (!fs.existsSync(config.storage.pdfDir)) {
+    fs.mkdirSync(config.storage.pdfDir, { recursive: true });
+  }
+
   // Warm up in-memory full-text search index
   await initializeSearchIndex();
+
+  // Reconcile and backfill any missing PDFs for published articles
+  await reconcileMissingPdfs();
 });
 
 // Graceful Shutdown

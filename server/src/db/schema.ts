@@ -42,10 +42,8 @@ export const content = mysqlTable('content', {
   coverImage: varchar('cover_image', { length: 255 }),
   status: mysqlEnum('status', ['draft', 'published', 'archived']).default('draft'),
   
-  // PDF Export Metadata
+  // PDF Export Flag
   pdfEnabled: tinyint('pdf_enabled').default(0),
-  pdfFilePath: varchar('pdf_file_path', { length: 255 }),
-  pdfGeneratedAt: timestamp('pdf_generated_at'),
   
   viewCount: int('view_count').default(0),
   publishedAt: timestamp('published_at'),
@@ -68,6 +66,10 @@ export const contentTranslations = mysqlTable('content_translations', {
   summary: text('summary'),
   body: mediumtext('body').notNull(), // Full Sanitized HTML (up to 16MB)
   bodySearchable: mediumtext('body_searchable').notNull(), // Stripped Plain Text (up to 16MB for full search indexing)
+  
+  // Multilingual PDF Export Path & Timestamp
+  pdfFilePath: varchar('pdf_file_path', { length: 255 }),
+  pdfGeneratedAt: timestamp('pdf_generated_at'),
 }, (table) => [
   uniqueIndex('uniq_content_lang').on(table.contentId, table.langCode),
   uniqueIndex('uniq_slug_lang').on(table.slug, table.langCode),

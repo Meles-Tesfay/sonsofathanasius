@@ -3,8 +3,9 @@ import { sendSuccess } from '../utils/response.js';
 import { config } from '../config/index.js';
 import { getCacheMetrics } from '../cache/metrics.js';
 import docsRouter from './docs.js';
-
 import searchRouter from './search.js';
+import uploadRouter from './upload.js';
+import pdfRouter from './pdf.js';
 
 const router = Router();
 
@@ -13,6 +14,12 @@ router.use('/', docsRouter);
 
 // 2. Full-Text Search Engine Route
 router.use('/search', searchRouter);
+
+// 3. Admin Storage & Uploads Route
+router.use('/admin', uploadRouter);
+
+// 4. Articles & PDF Routes
+router.use('/articles', pdfRouter);
 
 /**
  * Health Check & API Status Endpoint

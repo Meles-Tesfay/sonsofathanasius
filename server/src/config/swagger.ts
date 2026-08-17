@@ -120,6 +120,106 @@ export const openApiSpec = {
         },
       },
     },
+    '/articles/{slug}/pdf': {
+      get: {
+        tags: ['Articles', 'PDF'],
+        summary: 'Download Pre-Generated or On-Demand Article PDF',
+        description:
+          'Streams static pre-generated A4 PDF document with Unicode NFC normalization and localized typography. Generates on-the-fly and caches to disk if missing.',
+        parameters: [
+          {
+            name: 'slug',
+            in: 'path',
+            required: true,
+            description: 'Article slug',
+            schema: { type: 'string', example: 'deity-of-jesus-christ-scripture' },
+          },
+          {
+            name: 'lang',
+            in: 'query',
+            required: false,
+            description: 'Language code (default: "am")',
+            schema: { type: 'string', enum: ['am', 'en', 'om', 'ti'], default: 'am' },
+          },
+        ],
+        responses: {
+          '200': {
+            description: 'Binary PDF Stream',
+            content: {
+              'application/pdf': {
+                schema: { type: 'string', format: 'binary' },
+              },
+            },
+          },
+          '404': {
+            description: 'Article not found or PDF export disabled',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ErrorResponse' },
+              },
+            },
+          },
+        },
+      },
+    },
+    '/admin/covers/upload': {
+      post: {
+        tags: ['Admin', 'Uploads'],
+        summary: 'Upload Article Cover Image',
+        description:
+          'Uploads and stores a WebP or JPEG cover image with client-side canvas compression (≤500KB) and server-side magic byte validation.',
+        requestBody: {
+          required: true,
+          content: {
+            'multipart/form-data': {
+              schema: {
+                type: 'object',
+                properties: {
+                  cover: {
+                    type: 'string',
+                    format: 'binary',
+                    description: 'WebP or JPEG image file (max 500KB)',
+                  },
+                },
+                required: ['cover'],
+              },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'Cover image uploaded and verified successfully',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean', example: true },
+                    data: {
+                      type: 'object',
+                      properties: {
+                        coverUrl: { type: 'string', example: '/uploads/covers/cover_1723901234_a1b2c3d4.webp' },
+                        filename: { type: 'string', example: 'cover_1723901234_a1b2c3d4.webp' },
+                        sizeBytes: { type: 'integer', example: 142050 },
+                        format: { type: 'string', example: 'webp' },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          '400': {
+            description: 'Invalid image format, size exceeded, or magic bytes mismatch',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ErrorResponse' },
+              },
+            },
+          },
+        },
+      },
+    },
   },
   components: {
     securitySchemes: {
