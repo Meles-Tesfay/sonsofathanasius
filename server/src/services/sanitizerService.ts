@@ -4,6 +4,8 @@ import { extractScriptureCitations, autoWrapScriptureCitations } from './citatio
 
 /**
  * Strict Sanitize-HTML Configuration for Orthodox Theological Rich-Text Articles (TipTap)
+ * Per Decision D3 (FILE_STORAGE_PLAN.md): Covers-only storage policy.
+ * Inline <img>, <figure>, and <figcaption> are disallowed.
  */
 export const SANITIZER_OPTIONS: sanitizeHtml.IOptions = {
   allowedTags: [
@@ -35,11 +37,8 @@ export const SANITIZER_OPTIONS: sanitizeHtml.IOptions = {
     'span',
     'sub',
     'sup',
-    // Links & Media
+    // Links
     'a',
-    'img',
-    'figure',
-    'figcaption',
     // Tables
     'table',
     'thead',
@@ -50,22 +49,19 @@ export const SANITIZER_OPTIONS: sanitizeHtml.IOptions = {
   ],
 
   allowedAttributes: {
-    a: ['href', 'target', 'rel', 'name'],
+    a: ['href', 'target', 'rel', 'name', 'title'],
     span: ['class', 'data-ref', 'data-type'],
-    img: ['src', 'alt', 'title', 'loading', 'width', 'height', 'class'],
     code: ['class'],
     pre: ['class'],
     blockquote: ['class'],
     th: ['colspan', 'rowspan', 'align', 'valign'],
     td: ['colspan', 'rowspan', 'align', 'valign'],
-    figure: ['class'],
-    figcaption: ['class'],
+    p: ['title'],
   },
 
   allowedSchemes: ['http', 'https', 'mailto', 'tel'],
   allowedSchemesByTag: {
     a: ['http', 'https', 'mailto', 'tel'],
-    img: ['http', 'https'],
   },
 
   // Enforce security policies and link relations
@@ -91,17 +87,6 @@ export const SANITIZER_OPTIONS: sanitizeHtml.IOptions = {
       };
     },
 
-    img: (tagName, attribs) => {
-      // Enforce lazy loading on all content images
-      if (!attribs.loading) {
-        attribs.loading = 'lazy';
-      }
-      return {
-        tagName,
-        attribs,
-      };
-    },
-
     span: (tagName, attribs) => {
       // Validate class for spans (only allow scripture-citation or safe typographic classes)
       const allowedClasses = ['scripture-citation', 'patristic-quote', 'theological-term', 'text-highlight'];
@@ -117,14 +102,15 @@ export const SANITIZER_OPTIONS: sanitizeHtml.IOptions = {
   },
 
   // Strip dangerous elements completely along with their inner text
-  nonTextTags: ['script', 'style', 'textarea', 'option', 'noscript', 'iframe', 'object', 'embed', 'applet', 'form'],
+  nonTextTags: ['script', 'style', 'textarea', 'option', 'noscript', 'iframe', 'object', 'embed', 'applet', 'form', 'img'],
 };
 
 /**
  * Sanitizes rich-text HTML string:
- * 1. Strips malicious tags/attributes (XSS immunity).
- * 2. Auto-wraps raw bracketed scripture citations into TipTap citation nodes.
- * 3. Applies Unicode NFC normalization.
+ * 1. Unicode NFC Normalization on raw input.
+ * 2. Strict HTML Sanitization (XSS immunity & tag whitelisting).
+ * 3. Safe, text-node-aware scripture citation wrapping on well-formed output.
+ * 4. Final NFC Normalization on output.
  */
 export function sanitizeArticleHtml(rawHtml: string): string {
   if (!rawHtml || typeof rawHtml !== 'string') {
@@ -134,14 +120,14 @@ export function sanitizeArticleHtml(rawHtml: string): string {
   // 1. Unicode NFC Normalization on raw input
   const normalizedInput = rawHtml.normalize('NFC');
 
-  // 2. Auto-wrap raw bracketed scriptures into TipTap spans
-  const wrappedHtml = autoWrapScriptureCitations(normalizedInput);
+  // 2. Strict HTML Sanitization first (eliminates invalid markup, scripts, and ensures well-formed attributes)
+  const cleaned = sanitizeHtml(normalizedInput, SANITIZER_OPTIONS);
 
-  // 3. Strict HTML Sanitization
-  const cleaned = sanitizeHtml(wrappedHtml, SANITIZER_OPTIONS);
+  // 3. Auto-wrap verified canonical scripture citations on text nodes only
+  const wrappedHtml = autoWrapScriptureCitations(cleaned);
 
   // 4. Final NFC Normalization on output
-  return cleaned.normalize('NFC').trim();
+  return wrappedHtml.normalize('NFC').trim();
 }
 
 export interface ProcessedArticleContent {
@@ -155,7 +141,7 @@ export interface ProcessedArticleContent {
  * Takes raw HTML input from Admin editor, seeder, or migration script and produces:
  * - `sanitizedHtml`: XSS-immune HTML for MariaDB `content_translations.body`
  * - `bodySearchable`: Clean plain text for MariaDB `content_translations.body_searchable` and MiniSearch
- * - `citations`: Unique scripture references array (e.g. `["[ዮሐ 5:31]", "[1 ቆሮ 15:3]"]`)
+ * - `citations`: Unique canonical scripture references array (e.g. `["ዮሐ 5:31", "1 ቆሮ 15:3-4"]`)
  */
 export function processArticleContent(rawHtml: string): ProcessedArticleContent {
   const sanitizedHtml = sanitizeArticleHtml(rawHtml);
