@@ -1,6 +1,7 @@
 import { db, poolConnection } from './index.js';
 import { categories, tags, content, contentTranslations } from './schema.js';
 import { eq } from 'drizzle-orm';
+import { processArticleContent } from '../services/sanitizerService.js';
 
 async function seed() {
   console.log('🌱 [Seed] Starting database seeding for Sons of Athanasius...');
@@ -144,28 +145,34 @@ async function seed() {
       const articleId = contentInsert.insertId;
 
       // Amharic Translation
+      const amharicRaw = '<h2>የክርስቶስ የባሕርይ አምላክነት</h2><p>በመጀመሪያ ቃል ነበረ፤ ቃልም በእግዚአብሔር ዘንድ ነበረ፤ ቃልም እግዚአብሔር ነበረ። [ዮሐ 1:1]</p><blockquote>«እኔና አብ አንድ ነን።» (ዮሐ 10:30)</blockquote><p>ይህ ድንቅ ቃል የክርስቶስን የባሕርይ አንድነት ከአብና ከመንፈስ ቅዱስ ጋር በማያሻማ መልኩ ያስረዳል። ኦርቶዶክሳዊት ቤተክርስቲያናችን የምታስተምረው ክርስቶስ ከሁለት ባሕርይ አንድ ባሕርይ፣ ከሁለት አካል አንድ አካል የሆነ ፍጹም አምላክ ፍጹም ሰው መሆኑን ነው።</p>';
+      const amharicProcessed = processArticleContent(amharicRaw);
+
       await db.insert(contentTranslations).values({
         contentId: articleId,
         langCode: 'am',
         title: 'የኢየሱስ ክርስቶስ አምላክነት በቅዱሳት መጻሕፍት ብርሃን',
         slug: 'deity-of-jesus-christ-scripture',
         summary: 'ስለ ጌታችን መድኃኒታችን ኢየሱስ ክርስቶስ ፍጹም አምላክነትና ፍጹም ሰውነት የተሰጠ ኦርቶዶክሳዊ ትምህርት።',
-        body: '<h2>የክርስቶስ የባሕርይ አምላክነት</h2><p>በመጀመሪያ ቃል ነበረ፤ ቃልም በእግዚአብሔር ዘንድ ነበረ፤ ቃልም እግዚአብሔር ነበረ። <span data-ref="ዮሐ 1:1" class="scripture-citation">[ዮሐ 1:1]</span></p><blockquote>«እኔና አብ አንድ ነን።» (ዮሐ 10:30)</blockquote><p>ይህ ድንቅ ቃል የክርስቶስን የባሕርይ አንድነት ከአብና ከመንፈስ ቅዱስ ጋር በማያሻማ መልኩ ያስረዳል። ኦርቶዶክሳዊት ቤተክርስቲያናችን የምታስተምረው ክርስቶስ ከሁለት ባሕርይ አንድ ባሕርይ፣ ከሁለት አካል አንድ አካል የሆነ ፍጹም አምላክ ፍጹም ሰው መሆኑን ነው።</p>',
-        bodySearchable: 'የክርስቶስ የባሕርይ አምላክነት በመጀመሪያ ቃል ነበረ፤ ቃልም በእግዚአብሔር ዘንድ ነበረ፤ ቃልም እግዚአብሔር ነበረ። [ዮሐ 1:1] እኔና አብ አንድ ነን። (ዮሐ 10:30) ይህ ድንቅ ቃል የክርስቶስን የባሕርይ አንድነት ከአብና ከመንፈስ ቅዱስ ጋር በማያሻማ መልኩ ያስረዳል።',
+        body: amharicProcessed.sanitizedHtml,
+        bodySearchable: amharicProcessed.bodySearchable,
       });
 
       // English Translation
+      const englishRaw = '<h2>The True Divinity of Christ</h2><p>In the beginning was the Word, and the Word was with God, and the Word was God. [John 1:1]</p><blockquote>"I and My Father are one." (John 10:30)</blockquote><p>This profound proclamation clearly demonstrates the consubstantial unity of Christ with the Father and the Holy Spirit. The Orthodox Church upholds the Miaphysite Christology: one incarnate nature of God the Word.</p>';
+      const englishProcessed = processArticleContent(englishRaw);
+
       await db.insert(contentTranslations).values({
         contentId: articleId,
         langCode: 'en',
         title: 'The Deity of Jesus Christ in the Light of Sacred Scripture',
         slug: 'the-deity-of-jesus-christ-in-scripture',
         summary: 'An Orthodox theological exposition on the true divinity and perfect humanity of our Lord Jesus Christ.',
-        body: '<h2>The True Divinity of Christ</h2><p>In the beginning was the Word, and the Word was with God, and the Word was God. <span data-ref="John 1:1" class="scripture-citation">[John 1:1]</span></p><blockquote>"I and My Father are one." (John 10:30)</blockquote><p>This profound proclamation clearly demonstrates the consubstantial unity of Christ with the Father and the Holy Spirit. The Orthodox Church upholds the Miaphysite Christology: one incarnate nature of God the Word.</p>',
-        bodySearchable: 'The True Divinity of Christ In the beginning was the Word, and the Word was with God, and the Word was God. [John 1:1] I and My Father are one. (John 10:30) This profound proclamation clearly demonstrates the consubstantial unity of Christ with the Father and the Holy Spirit.',
+        body: englishProcessed.sanitizedHtml,
+        bodySearchable: englishProcessed.bodySearchable,
       });
 
-      console.log(`   ✓ Inserted sample published article (ID: ${articleId}) with 'am' and 'en' translations`);
+      console.log(`   ✓ Inserted sample published article (ID: ${articleId}) with 'am' and 'en' translations via processArticleContent`);
     }
   }
 
