@@ -1,77 +1,71 @@
-import express, { Request, Response, NextFunction } from 'express';
-import cors from 'cors';
-import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
+import express, { Request, Response } from 'express';
+import cookieParser from 'cookie-parser';
+import fs from 'fs';
 import { config } from './config/index.js';
+import { securityHeaders, corsMiddleware, methodAllowlist } from './middleware/security.js';
+import { generalLimiter } from './middleware/rateLimiter.js';
+import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
+import apiRouter from './routes/index.js';
 
 const app = express();
 
-// 1. Security & Headers Middleware
-app.use(helmet());
-app.use(
-  cors({
-    origin: [config.clientUrl, 'https://www.sonsofathanasius.com', 'https://sonsofathanasius.com'],
-    credentials: true,
-  })
-);
+// 1. Security & Method Allowlist Middleware
+app.use(securityHeaders);
+app.use(corsMiddleware);
+app.use(methodAllowlist);
 
-// 2. Body Parsing Middleware
+// 2. Cookie & Body Parsing Middleware
+app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// 3. Rate Limiting Middleware
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 300, // Limit each IP to 300 requests per windowMs
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: {
-    success: false,
-    error: 'Too many requests from this IP, please try again after 15 minutes.',
-  },
-});
-app.use('/api/', apiLimiter);
+// 3. Static Uploads File Serving (Local dev parity with production Apache web root)
+app.use('/uploads', express.static(config.storage.uploadsDir));
 
-// 4. Base Health & Version Route
-app.get('/api/v1/health', (_req: Request, res: Response) => {
-  res.json({
-    status: 'ok',
-    app: 'Sons of Athanasius API',
-    version: '2.0.0',
-    timestamp: new Date().toISOString(),
-    environment: config.nodeEnv,
-  });
-});
+// 4. Global Rate Limiter for API
+app.use('/api/', generalLimiter);
 
-// 5. Root route
+// 5. API Documentation Alias & API v1 Master Router
+app.get('/api/docs', (_req: Request, res: Response) => res.redirect('/api/v1/docs'));
+app.use('/api/v1', apiRouter);
+
+// 6. Root route
 app.get('/', (_req: Request, res: Response) => {
   res.json({
     name: 'ደቂቀ አትናቴዎስ (Sons of Athanasius) API',
     version: '2.0.0',
-    documentation: '/api/v1/health',
+    documentation: '/api/v1/docs',
+    openApiSpec: '/api/v1/docs.json',
+    health: '/api/v1/health',
   });
 });
 
-// 6. Global 404 Handler
-app.use((_req: Request, res: Response) => {
-  res.status(404).json({
-    success: false,
-    error: 'Endpoint not found',
-  });
-});
+// 7. Global 404 Handler
+app.use(notFoundHandler);
 
-// 7. Global Error Handler
-app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-  console.error('[Unhandled Error]', err);
-  res.status(500).json({
-    success: false,
-    error: config.nodeEnv === 'production' ? 'Internal server error' : err.message,
-  });
-});
+// 8. Centralized Error Handler (Express 5 native async support)
+app.use(errorHandler);
 
-// 8. Server Boot
-const server = app.listen(config.port, () => {
+import { initializeSearchIndex } from './services/searchService.js';
+import { reconcileMissingPdfs } from './services/pdfService.js';
+
+// 9. Server Boot
+const server = app.listen(config.port, async () => {
   console.log(`☦ [Sons of Athanasius API] Server running on http://localhost:${config.port} (${config.nodeEnv})`);
+
+  // Ensure upload directories exist on disk
+  if (!fs.existsSync(config.storage.coversDir)) {
+    fs.mkdirSync(config.storage.coversDir, { recursive: true });
+  }
+  if (!fs.existsSync(config.storage.pdfDir)) {
+    fs.mkdirSync(config.storage.pdfDir, { recursive: true });
+  }
+
+  // Warm up in-memory full-text search index
+  await initializeSearchIndex();
+
+  // Reconcile and backfill any missing PDFs for published articles
+  await reconcileMissingPdfs();
 });
 
 // Graceful Shutdown

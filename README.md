@@ -54,7 +54,7 @@ sons-of-athanasius/
 │   │   │   ├── schema.ts       # MariaDB / MySQL table definitions
 │   │   │   ├── index.ts        # Database connection pool (mysql2)
 │   │   │   └── seed.ts         # Seeding for 5 categories & tags
-│   │   ├── cache/              # Node-Cache configuration & helpers
+│   │   ├── cache/              # LRU-Cache configuration & helpers
 │   │   ├── controllers/        # Article, Category, Search, PDF, Contact controllers
 │   │   ├── middleware/         # Error handler, rate limit, CORS, cache middleware
 │   │   ├── routes/             # Express 5 API routes (/api/v1/...)
@@ -79,7 +79,7 @@ sons-of-athanasius/
 
 ### Verified 2026 Technology Stack:
 - **Frontend**: Vite 8 (Rolldown), React 19.2+, TypeScript ~6.0.3, Tailwind CSS v4 (`@tailwindcss/vite`), Motion 13 (`motion/react`), Lucide React, TipTap 3.30.1, i18next.
-- **Backend**: Express 5.2, Node.js 22 LTS, Drizzle ORM 0.45.x, `mysql2`, Zod 4, Node-Cache 5.1, PDFKit 0.19.1, Sanitize-HTML 2.17, MiniSearch.
+- **Backend**: Express 5.2, Node.js 22 LTS, Drizzle ORM 0.45.x, `mysql2`, Zod 4, LRU-Cache 11.5.2, PDFKit 0.19.1, Sanitize-HTML 2.17, MiniSearch.
 - **Database**: MariaDB 10.11 LTS (`utf8mb4_unicode_520_ci`).
 
 ---
