@@ -523,6 +523,59 @@ export const openApiSpec = {
         },
       },
     },
+    '/contact': {
+      post: {
+        tags: ['Contact'],
+        summary: 'Submit Contact Message',
+        description: 'Submits a contact or inquiry message from a user. Highly rate-limited.',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/ContactForm' },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'Message received successfully',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean', example: true },
+                    data: {
+                      type: 'object',
+                      properties: {
+                        message: { type: 'string', example: 'Message received successfully.' },
+                      },
+                    },
+                    meta: { $ref: '#/components/schemas/ResponseMeta' },
+                  },
+                },
+              },
+            },
+          },
+          '400': {
+            description: 'Invalid form payload (Zod validation error)',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ErrorResponse' },
+              },
+            },
+          },
+          '429': {
+            description: 'Rate limit exceeded',
+            content: {
+              'application/json': {
+                schema: { $ref: '#/components/schemas/ErrorResponse' },
+              },
+            },
+          },
+        },
+      },
+    },
   },
   components: {
     securitySchemes: {
@@ -582,6 +635,16 @@ export const openApiSpec = {
           },
           meta: { $ref: '#/components/schemas/ResponseMeta' },
         },
+      },
+      ContactForm: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', example: 'John Doe' },
+          email: { type: 'string', example: 'john.doe@example.com' },
+          subject: { type: 'string', example: 'Question about theology' },
+          message: { type: 'string', example: 'I would like to ask about the trinity.' },
+        },
+        required: ['name', 'email', 'message'],
       },
       Category: {
         type: 'object',

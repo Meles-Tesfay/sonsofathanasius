@@ -9,6 +9,7 @@ import articlesRouter from './articles.js';
 import categoriesRouter from './categories.js';
 import tagsRouter from './tags.js';
 import dailyRouter from './daily.js';
+import contactRouter from './contact.js';
 
 const router = Router();
 

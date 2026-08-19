@@ -50,28 +50,32 @@ import { initializeSearchIndex } from './services/searchService.js';
 import { reconcileMissingPdfs } from './services/pdfService.js';
 
 // 9. Server Boot
-const server = app.listen(config.port, async () => {
-  console.log(`☦ [Sons of Athanasius API] Server running on http://localhost:${config.port} (${config.nodeEnv})`);
+let server: import('http').Server | undefined;
 
-  // Ensure upload directories exist on disk
-  if (!fs.existsSync(config.storage.coversDir)) {
-    fs.mkdirSync(config.storage.coversDir, { recursive: true });
-  }
-  if (!fs.existsSync(config.storage.pdfDir)) {
-    fs.mkdirSync(config.storage.pdfDir, { recursive: true });
-  }
+if (process.env.NODE_ENV !== 'test') {
+  server = app.listen(config.port, async () => {
+    console.log(`☦ [Sons of Athanasius API] Server running on http://localhost:${config.port} (${config.nodeEnv})`);
 
-  // Warm up in-memory full-text search index
-  await initializeSearchIndex();
+    // Ensure upload directories exist on disk
+    if (!fs.existsSync(config.storage.coversDir)) {
+      fs.mkdirSync(config.storage.coversDir, { recursive: true });
+    }
+    if (!fs.existsSync(config.storage.pdfDir)) {
+      fs.mkdirSync(config.storage.pdfDir, { recursive: true });
+    }
 
-  // Reconcile and backfill any missing PDFs for published articles
-  await reconcileMissingPdfs();
-});
+    // Warm up in-memory full-text search index
+    await initializeSearchIndex();
+
+    // Reconcile and backfill any missing PDFs for published articles
+    await reconcileMissingPdfs();
+  });
+}
 
 // Graceful Shutdown
 process.on('SIGTERM', () => {
   console.log('SIGTERM received. Shutting down gracefully...');
-  server.close(() => {
+  server?.close(() => {
     console.log('Process terminated.');
   });
 });
