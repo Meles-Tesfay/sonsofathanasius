@@ -27,7 +27,7 @@ export async function listTags(
       id: tags.id,
       slug: tags.slug,
       name: tags.name,
-      articleCount: sql<number>`COUNT(DISTINCT ${contentTags.contentId})`.as('article_count'),
+      articleCount: sql<number>`COUNT(DISTINCT ${content.id})`.as('article_count'),
     })
     .from(tags)
     .leftJoin(contentTags, eq(contentTags.tagId, tags.id))
