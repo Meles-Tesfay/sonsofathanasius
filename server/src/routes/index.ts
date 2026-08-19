@@ -5,6 +5,8 @@ import { getCacheMetrics } from '../cache/metrics.js';
 import docsRouter from './docs.js';
 import searchRouter from './search.js';
 import uploadRouter from './upload.js';
+import authRouter from './auth.js';
+import adminRouter from './admin.js';
 import categoriesRouter from './categories.js';
 import tagsRouter from './tags.js';
 import articlesRouter from './articles.js';
@@ -21,7 +23,11 @@ router.use('/search', searchRouter);
 // 3. Admin Storage & Uploads Route
 router.use('/admin', uploadRouter);
 
-// 4. Public REST API Routes (Phase B6)
+// 4. Admin Auth & Content Management Routes (Phase B7)
+router.use('/admin/auth', authRouter);
+router.use('/admin', adminRouter);
+
+// 5. Public REST API Routes (Phase B6)
 router.use('/categories', categoriesRouter);
 router.use('/tags', tagsRouter);
 router.use('/articles', articlesRouter);  // Includes /articles/:slug/pdf
