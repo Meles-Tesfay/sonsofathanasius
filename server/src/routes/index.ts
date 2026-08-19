@@ -7,10 +7,11 @@ import searchRouter from './search.js';
 import uploadRouter from './upload.js';
 import authRouter from './auth.js';
 import adminRouter from './admin.js';
+import articlesRouter from './articles.js';
 import categoriesRouter from './categories.js';
 import tagsRouter from './tags.js';
-import articlesRouter from './articles.js';
 import dailyRouter from './daily.js';
+import contactRouter from './contact.js';
 
 const router = Router();
 
@@ -28,10 +29,23 @@ router.use('/admin/auth', authRouter);
 router.use('/admin', adminRouter);
 
 // 5. Public REST API Routes (Phase B6)
+// 2. Categories Taxonomy Route
 router.use('/categories', categoriesRouter);
+
+// 3. Tags Taxonomy Route
 router.use('/tags', tagsRouter);
-router.use('/articles', articlesRouter);  // Includes /articles/:slug/pdf
+
+// 4. Articles & PDF Delivery Route
+router.use('/articles', articlesRouter);
+
+// 5. Daily Lectionary & Patristic Reading Route
 router.use('/daily', dailyRouter);
+
+// 6. In-Memory Search Engine Route
+router.use('/search', searchRouter);
+
+// 7. Admin Media Upload Route
+router.use('/admin', uploadRouter);
 
 /**
  * Health Check & API Status Endpoint
