@@ -1,24 +1,24 @@
-import { Request, Response } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import fs from 'fs';
 import { getOrGenerateArticlePdf } from '../services/pdfService.js';
-import { sendError } from '../utils/response.js';
+import { BadRequestError } from '../middleware/errorHandler.js';
 
 /**
  * Stream or generate static article PDF
  * GET /api/v1/articles/:slug/pdf?lang={am|en|om|ti}
  */
-export async function downloadArticlePdfController(req: Request, res: Response) {
+export async function downloadArticlePdfController(req: Request, res: Response, next: NextFunction) {
   const rawSlug = req.params.slug;
-  const slug = Array.isArray(rawSlug) ? rawSlug[0] : rawSlug;
+  const slug = (Array.isArray(rawSlug) ? rawSlug[0] : rawSlug)?.trim();
   const rawLang = req.query.lang;
-  const lang = (Array.isArray(rawLang) ? rawLang[0] : rawLang) || 'am';
+  const lang = ((Array.isArray(rawLang) ? rawLang[0] : rawLang) || 'am').toString();
 
-  if (!slug || typeof slug !== 'string') {
-    return sendError(res, 'Article slug is required', 400);
+  if (!slug) {
+    throw new BadRequestError('Article slug is required');
   }
 
   try {
-    const { filePath, fileName } = await getOrGenerateArticlePdf(slug, String(lang));
+    const { filePath, fileName } = await getOrGenerateArticlePdf(slug, lang);
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(fileName)}"`);
@@ -28,14 +28,12 @@ export async function downloadArticlePdfController(req: Request, res: Response) 
     stream.on('error', (err) => {
       console.error('PDF stream error:', err);
       if (!res.headersSent) {
-        sendError(res, 'Error streaming PDF file', 500);
+        next(err);
       }
     });
 
     return stream.pipe(res);
-  } catch (err: unknown) {
-    const statusCode = (err as { statusCode?: number })?.statusCode || 500;
-    const message = err instanceof Error ? err.message : 'PDF generation failed';
-    return sendError(res, message, statusCode);
+  } catch (err) {
+    next(err);
   }
 }

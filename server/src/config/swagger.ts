@@ -4,7 +4,7 @@ export const openApiSpec = {
     title: 'ደቂቀ አትናቴዎስ (Sons of Athanasius) — REST API',
     version: '2.0.0',
     description:
-      'Official API for the Ethiopian Orthodox Tewahedo Church (EOTC) Apologetics & Digital Library platform. Features high-performance in-memory caching, Amharic homophone search, multi-language content delivery (Amharic, English, Afaan Oromoo, Tigrigna), dynamic PDF generation, and rich scripture citation support.',
+      'Official API for the Ethiopian Orthodox Tewahedo Church (EOTC) Apologetics & Digital Library platform. Features high-performance in-memory caching (LRU), Amharic homophone full-text search, multi-language content delivery (Amharic, English, Afaan Oromoo, Tigrigna), dynamic PDF generation, and rich scripture citation support.',
     contact: {
       name: 'Sons of Athanasius Engineering Team',
       url: 'https://www.sonsofathanasius.com',
@@ -20,19 +20,18 @@ export const openApiSpec = {
       description: 'Local Development Server',
     },
     {
-      url: 'https://www.sonsofathanasius.com/api/v1',
+      url: 'https://api.sonsofathanasius.com/api/v1',
       description: 'Production Server',
     },
   ],
   tags: [
-    { name: 'System', description: 'API Health and System Status endpoints' },
-    { name: 'Categories', description: 'Multilingual theological category taxonomy' },
+    { name: 'System', description: 'API Health, Metrics, and System Status endpoints' },
+    { name: 'Taxonomy', description: 'Multilingual theological categories and tag relations' },
     { name: 'Articles', description: 'Public apologetics articles, feeds, and single reader' },
-    { name: 'Search', description: 'Amharic homophone normalized in-memory fulltext search' },
-    { name: 'PDF', description: 'Pure JavaScript dynamic PDF export with Ethiopic fonts' },
-    { name: 'Daily', description: 'Daily lectionary, saints, and patristic quotes' },
-    { name: 'Contact', description: 'Contact form submission and inquiries' },
-    { name: 'Admin', description: 'Protected content management endpoints (JWT required)' },
+    { name: 'Spiritual', description: 'Daily lectionary, saints commemoration, and patristic readings' },
+    { name: 'Search', description: 'Amharic homophone normalized in-memory full-text search' },
+    { name: 'PDF', description: 'Pure JavaScript dynamic PDF export with localized Ethiopic typography' },
+    { name: 'Admin', description: 'Protected content management endpoints (Session cookie required)' },
   ],
   paths: {
     '/health': {
@@ -45,8 +44,37 @@ export const openApiSpec = {
             description: 'System is healthy and operational',
             content: {
               'application/json': {
+                schema: { $ref: '#/components/schemas/HealthResponse' },
+              },
+            },
+          },
+        },
+      },
+    },
+    '/metrics': {
+      get: {
+        tags: ['System'],
+        summary: 'Cache & Performance Metrics',
+        description: 'Returns live LRU cache statistics (hits, misses, evictions, coalesced count, byte size) and memory usage.',
+        responses: {
+          '200': {
+            description: 'Live performance metrics',
+            content: {
+              'application/json': {
                 schema: {
-                  $ref: '#/components/schemas/HealthResponse',
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean', example: true },
+                    data: {
+                      type: 'object',
+                      properties: {
+                        cache: { type: 'object' },
+                        memoryUsage: { type: 'object' },
+                        uptimeSeconds: { type: 'integer', example: 3600 },
+                        timestamp: { type: 'string', format: 'date-time' },
+                      },
+                    },
+                  },
                 },
               },
             },
@@ -54,45 +82,29 @@ export const openApiSpec = {
         },
       },
     },
-    '/search': {
+    '/categories': {
       get: {
-        tags: ['Search'],
-        summary: 'Full-Text In-Memory Search (Amharic Normalized)',
-        description:
-          'Searches through published articles using MiniSearch with Ethiopic phonetic homophone normalization (ሀ↔ሐ↔ኀ, ሠ↔ሰ, ዐ↔አ, ጸ↔ፀ), prefix matching, and typo tolerance.',
+        tags: ['Taxonomy'],
+        summary: 'List Active Categories',
+        description: 'Retrieve all active categories with localized names, descriptions, and published article counts.',
         parameters: [
-          {
-            name: 'q',
-            in: 'query',
-            required: true,
-            description: 'Search query string (e.g. "ሥላሴ", "ክርስቶስ", "Trinity")',
-            schema: { type: 'string', example: 'ሥላሴ' },
-          },
           {
             name: 'lang',
             in: 'query',
             required: false,
-            description: 'Content language filter (default: "am")',
+            description: 'Language code for localization (default: "am")',
             schema: { type: 'string', enum: ['am', 'en', 'om', 'ti'], default: 'am' },
-          },
-          {
-            name: 'category',
-            in: 'query',
-            required: false,
-            description: 'Optional category slug filter (e.g. "christianity")',
-            schema: { type: 'string', example: 'christianity' },
-          },
-          {
-            name: 'limit',
-            in: 'query',
-            required: false,
-            description: 'Maximum number of results to return (max: 50, default: 20)',
-            schema: { type: 'integer', minimum: 1, maximum: 50, default: 20 },
           },
         ],
         responses: {
           '200': {
-            description: 'Matching search results ordered by BM25 relevance score',
+            description: 'List of localized categories',
+            headers: {
+              'X-Cache': {
+                description: 'Cache resolution status',
+                schema: { type: 'string', enum: ['HIT', 'MISS', 'COALESCED', 'STALE'] },
+              },
+            },
             content: {
               'application/json': {
                 schema: {
@@ -101,7 +113,7 @@ export const openApiSpec = {
                     success: { type: 'boolean', example: true },
                     data: {
                       type: 'array',
-                      items: { $ref: '#/components/schemas/SearchResultItem' },
+                      items: { $ref: '#/components/schemas/Category' },
                     },
                     meta: { $ref: '#/components/schemas/ResponseMeta' },
                   },
@@ -109,8 +121,213 @@ export const openApiSpec = {
               },
             },
           },
-          '400': {
-            description: 'Invalid query parameters',
+        },
+      },
+    },
+    '/tags': {
+      get: {
+        tags: ['Taxonomy'],
+        summary: 'List Active Tags',
+        description: 'Retrieve all tags with published article counts, sorted by popular usage.',
+        responses: {
+          '200': {
+            description: 'List of tags with article usage count',
+            headers: {
+              'X-Cache': {
+                description: 'Cache resolution status',
+                schema: { type: 'string', enum: ['HIT', 'MISS', 'COALESCED', 'STALE'] },
+              },
+            },
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean', example: true },
+                    data: {
+                      type: 'array',
+                      items: { $ref: '#/components/schemas/Tag' },
+                    },
+                    meta: { $ref: '#/components/schemas/ResponseMeta' },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    '/articles': {
+      get: {
+        tags: ['Articles'],
+        summary: 'List Published Articles',
+        description: 'Retrieve paginated published articles with optional category/tag filtering and sorting.',
+        parameters: [
+          {
+            name: 'lang',
+            in: 'query',
+            required: false,
+            description: 'Language code (default: "am")',
+            schema: { type: 'string', enum: ['am', 'en', 'om', 'ti'], default: 'am' },
+          },
+          {
+            name: 'category',
+            in: 'query',
+            required: false,
+            description: 'Category slug filter (e.g. "christianity")',
+            schema: { type: 'string' },
+          },
+          {
+            name: 'tag',
+            in: 'query',
+            required: false,
+            description: 'Tag slug filter (e.g. "trinity")',
+            schema: { type: 'string' },
+          },
+          {
+            name: 'page',
+            in: 'query',
+            required: false,
+            description: 'Page number (default: 1)',
+            schema: { type: 'integer', default: 1 },
+          },
+          {
+            name: 'limit',
+            in: 'query',
+            required: false,
+            description: 'Items per page (default: 12, max: 50)',
+            schema: { type: 'integer', default: 12 },
+          },
+          {
+            name: 'sort',
+            in: 'query',
+            required: false,
+            description: 'Sort order: latest (newest first) or popular (most views)',
+            schema: { type: 'string', enum: ['latest', 'popular'], default: 'latest' },
+          },
+        ],
+        responses: {
+          '200': {
+            description: 'Paginated article list',
+            headers: {
+              'X-Cache': {
+                description: 'Cache resolution status',
+                schema: { type: 'string', enum: ['HIT', 'MISS', 'COALESCED', 'STALE'] },
+              },
+            },
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean', example: true },
+                    data: {
+                      type: 'array',
+                      items: { $ref: '#/components/schemas/ArticleListItem' },
+                    },
+                    meta: { $ref: '#/components/schemas/ResponseMeta' },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    '/articles/latest': {
+      get: {
+        tags: ['Articles'],
+        summary: 'Latest Articles Feed',
+        description: 'Retrieve latest published articles across all categories for homepage hero/grid.',
+        parameters: [
+          {
+            name: 'lang',
+            in: 'query',
+            required: false,
+            description: 'Language code (default: "am")',
+            schema: { type: 'string', enum: ['am', 'en', 'om', 'ti'], default: 'am' },
+          },
+          {
+            name: 'limit',
+            in: 'query',
+            required: false,
+            description: 'Maximum items to return (default: 6, max: 20)',
+            schema: { type: 'integer', default: 6 },
+          },
+        ],
+        responses: {
+          '200': {
+            description: 'Latest articles feed',
+            headers: {
+              'X-Cache': {
+                description: 'Cache resolution status',
+                schema: { type: 'string', enum: ['HIT', 'MISS', 'COALESCED', 'STALE'] },
+              },
+            },
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean', example: true },
+                    data: {
+                      type: 'array',
+                      items: { $ref: '#/components/schemas/ArticleListItem' },
+                    },
+                    meta: { $ref: '#/components/schemas/ResponseMeta' },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    '/articles/{slug}': {
+      get: {
+        tags: ['Articles'],
+        summary: 'Get Article Detail',
+        description: 'Retrieve complete article by slug or numeric ID with smart multilingual fallback, citations, media, and tag relations.',
+        parameters: [
+          {
+            name: 'slug',
+            in: 'path',
+            required: true,
+            description: 'Article slug (in any language) or numeric ID',
+            schema: { type: 'string', example: 'deity-of-jesus-christ-scripture' },
+          },
+          {
+            name: 'lang',
+            in: 'query',
+            required: false,
+            description: 'Desired language code (falls back to Amharic if missing)',
+            schema: { type: 'string', enum: ['am', 'en', 'om', 'ti'], default: 'am' },
+          },
+        ],
+        responses: {
+          '200': {
+            description: 'Full article detail with smart fallback',
+            headers: {
+              'X-Cache': {
+                description: 'Cache resolution status',
+                schema: { type: 'string', enum: ['HIT', 'MISS', 'COALESCED', 'STALE'] },
+              },
+            },
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean', example: true },
+                    data: { $ref: '#/components/schemas/ArticleDetail' },
+                    meta: { $ref: '#/components/schemas/ResponseMeta' },
+                  },
+                },
+              },
+            },
+          },
+          '404': {
+            description: 'Article not found or not published',
             content: {
               'application/json': {
                 schema: { $ref: '#/components/schemas/ErrorResponse' },
@@ -123,9 +340,8 @@ export const openApiSpec = {
     '/articles/{slug}/pdf': {
       get: {
         tags: ['Articles', 'PDF'],
-        summary: 'Download Pre-Generated or On-Demand Article PDF',
-        description:
-          'Streams static pre-generated A4 PDF document with Unicode NFC normalization and localized typography. Generates on-the-fly and caches to disk if missing.',
+        summary: 'Download Article PDF',
+        description: 'Streams static pre-generated A4 PDF document with Unicode NFC normalization and localized typography. Generates on-the-fly if missing.',
         parameters: [
           {
             name: 'slug',
@@ -162,12 +378,107 @@ export const openApiSpec = {
         },
       },
     },
+    '/daily': {
+      get: {
+        tags: ['Spiritual'],
+        summary: 'Daily Orthodox Lectionary & Patristic Reading',
+        description: 'Returns saint of the day, daily scripture verse, and patristic quote with Ethiopian calendar date computation.',
+        parameters: [
+          {
+            name: 'lang',
+            in: 'query',
+            required: false,
+            description: 'Language code (default: "am")',
+            schema: { type: 'string', enum: ['am', 'en', 'om', 'ti'], default: 'am' },
+          },
+        ],
+        responses: {
+          '200': {
+            description: 'Daily spiritual reading and quote',
+            headers: {
+              'X-Cache': {
+                description: 'Cache resolution status',
+                schema: { type: 'string', enum: ['HIT', 'MISS', 'COALESCED', 'STALE'] },
+              },
+            },
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean', example: true },
+                    data: { $ref: '#/components/schemas/DailyReading' },
+                    meta: { $ref: '#/components/schemas/ResponseMeta' },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    '/search': {
+      get: {
+        tags: ['Search'],
+        summary: 'Full-Text In-Memory Search (Amharic Normalized)',
+        description: 'Searches through published articles using MiniSearch with Ethiopic phonetic homophone normalization (ሀ↔ሐ↔ኀ, ሠ↔ሰ, ዐ↔አ, ጸ↔ፀ), prefix matching, and relevance ranking.',
+        parameters: [
+          {
+            name: 'q',
+            in: 'query',
+            required: true,
+            description: 'Search query string (e.g. "ሥላሴ", "ክርስቶስ", "Trinity")',
+            schema: { type: 'string', example: 'ሥላሴ' },
+          },
+          {
+            name: 'lang',
+            in: 'query',
+            required: false,
+            description: 'Content language filter (default: "am")',
+            schema: { type: 'string', enum: ['am', 'en', 'om', 'ti'], default: 'am' },
+          },
+          {
+            name: 'category',
+            in: 'query',
+            required: false,
+            description: 'Optional category slug filter',
+            schema: { type: 'string', example: 'christianity' },
+          },
+          {
+            name: 'limit',
+            in: 'query',
+            required: false,
+            description: 'Maximum number of results to return (default: 20)',
+            schema: { type: 'integer', minimum: 1, maximum: 50, default: 20 },
+          },
+        ],
+        responses: {
+          '200': {
+            description: 'Matching search results ordered by relevance score',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean', example: true },
+                    data: {
+                      type: 'array',
+                      items: { $ref: '#/components/schemas/SearchResultItem' },
+                    },
+                    meta: { $ref: '#/components/schemas/ResponseMeta' },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
     '/admin/covers/upload': {
       post: {
-        tags: ['Admin', 'Uploads'],
+        tags: ['Admin'],
         summary: 'Upload Article Cover Image',
-        description:
-          'Uploads and stores a WebP or JPEG cover image with client-side canvas compression (≤500KB) and server-side magic byte validation.',
+        description: 'Uploads and stores a WebP or JPEG cover image with server-side magic byte validation (≤500KB).',
         requestBody: {
           required: true,
           content: {
@@ -206,14 +517,6 @@ export const openApiSpec = {
                     },
                   },
                 },
-              },
-            },
-          },
-          '400': {
-            description: 'Invalid image format, size exceeded, or magic bytes mismatch',
-            content: {
-              'application/json': {
-                schema: { $ref: '#/components/schemas/ErrorResponse' },
               },
             },
           },
@@ -276,11 +579,11 @@ export const openApiSpec = {
   },
   components: {
     securitySchemes: {
-      BearerAuth: {
-        type: 'http',
-        scheme: 'bearer',
-        bearerFormat: 'JWT',
-        description: 'Enter your JWT admin token for authorized CMS mutations.',
+      SessionAuth: {
+        type: 'apiKey',
+        in: 'cookie',
+        name: 'soa_admin_session',
+        description: 'Host-only, httpOnly secure session cookie scoped to /api/v1/admin.',
       },
     },
     schemas: {
@@ -291,8 +594,10 @@ export const openApiSpec = {
           limit: { type: 'integer', example: 12 },
           total: { type: 'integer', example: 45 },
           totalPages: { type: 'integer', example: 4 },
-          cached: { type: 'boolean', example: true },
-          timestamp: { type: 'string', format: 'date-time', example: '2026-08-17T06:30:00.000Z' },
+          hasNext: { type: 'boolean', example: true },
+          hasPrev: { type: 'boolean', example: false },
+          lang: { type: 'string', example: 'am' },
+          timestamp: { type: 'string', format: 'date-time', example: '2026-08-18T06:30:00.000Z' },
         },
         required: ['timestamp'],
       },
@@ -346,71 +651,52 @@ export const openApiSpec = {
         properties: {
           id: { type: 'integer', example: 1 },
           slug: { type: 'string', example: 'christianity' },
-          nameEn: { type: 'string', example: 'Christianity' },
-          nameAm: { type: 'string', example: 'በእንተ ክርስትና' },
-          nameOm: { type: 'string', example: "Waa'ee Kiristaanummaa" },
-          nameTi: { type: 'string', example: 'ብዛዕባ ክርስትና' },
-          descriptionEn: { type: 'string', example: 'Orthodox Christian theology and patristics.' },
-          descriptionAm: { type: 'string', example: 'የኦርቶዶክሳዊት ተዋሕዶ እምነት አስተምህሮ።' },
-          descriptionOm: { type: 'string', example: "Waa'ee amantii Ortodoksii Tawaahidoo." },
-          descriptionTi: { type: 'string', example: 'ናይ ኦርቶዶክሳዊት ተዋሕዶ እምነት ትምህርቲ።' },
+          name: { type: 'string', example: 'በእንተ ክርስትና' },
+          description: { type: 'string', example: 'የኦርቶዶክሳዊት ተዋሕዶ እምነት አስተምህሮ።' },
           sortOrder: { type: 'integer', example: 1 },
           articleCount: { type: 'integer', example: 18 },
+        },
+      },
+      Tag: {
+        type: 'object',
+        properties: {
+          id: { type: 'integer', example: 1 },
+          slug: { type: 'string', example: 'trinity' },
+          name: { type: 'string', example: 'ሥላሴ' },
+          articleCount: { type: 'integer', example: 5 },
         },
       },
       ContentMedia: {
         type: 'object',
         properties: {
           id: { type: 'integer', example: 1 },
-          contentId: { type: 'integer', example: 10 },
           mediaKind: { type: 'string', enum: ['video', 'audio'], example: 'video' },
           platform: { type: 'string', enum: ['youtube', 'vimeo', 'soundcloud', 'self-hosted'], example: 'youtube' },
           embedId: { type: 'string', example: 'dQw4w9WgXcQ' },
           caption: { type: 'string', example: 'Theological video explanation' },
-          sortOrder: { type: 'integer', example: 0 },
         },
       },
       ArticleListItem: {
         type: 'object',
         properties: {
           id: { type: 'integer', example: 1 },
-          categoryId: { type: 'integer', example: 1 },
-          categorySlug: { type: 'string', example: 'christianity' },
-          categoryName: { type: 'string', example: 'በእንተ ክርስትና' },
+          slug: { type: 'string', example: 'deity-of-jesus-christ-scripture' },
+          title: { type: 'string', example: 'የኢየሱስ ክርስቶስ አምላክነት በቅዱሳት መጻሕፍት ብርሃን' },
+          summary: { type: 'string', example: 'ጥናታዊ የዕቅበተ እምነት ማብራሪያ።' },
           authorName: { type: 'string', example: 'ዘአትናቴዎስ' },
           coverImage: { type: 'string', example: 'https://images.unsplash.com/photo-1548625361-195fe578ae5a' },
-          title: { type: 'string', example: 'የኢየሱስ ክርስቶስ አምላክነት በቅዱሳት መጻሕፍት ብርሃን' },
-          slug: { type: 'string', example: 'deity-of-jesus-christ-scripture' },
-          summary: { type: 'string', example: 'ጥናታዊ የዕቅበተ እምነት ማብራሪያ።' },
-          langCode: { type: 'string', example: 'am' },
-          pdfEnabled: { type: 'boolean', example: true },
+          pdfEnabled: { type: 'integer', example: 1 },
           viewCount: { type: 'integer', example: 342 },
           publishedAt: { type: 'string', format: 'date-time' },
-        },
-      },
-      ArticleDetail: {
-        type: 'object',
-        properties: {
-          id: { type: 'integer', example: 1 },
-          categoryId: { type: 'integer', example: 1 },
-          categorySlug: { type: 'string', example: 'christianity' },
-          categoryName: { type: 'string', example: 'በእንተ ክርስትና' },
-          authorName: { type: 'string', example: 'ዘአትናቴዎስ' },
-          coverImage: { type: 'string', example: 'https://images.unsplash.com/photo-1548625361-195fe578ae5a' },
-          title: { type: 'string', example: 'የኢየሱስ ክርስቶስ አምላክነት በቅዱሳት መጻሕፍት ብርሃን' },
-          slug: { type: 'string', example: 'deity-of-jesus-christ-scripture' },
-          summary: { type: 'string', example: 'ጥናታዊ የዕቅበተ እምነት ማብራሪያ።' },
-          body: { type: 'string', example: '<p>የጌታችንና የመድኃኒታችን የኢየሱስ ክርስቶስ ፍጹም አምላክነት... <span data-ref="ዮሐ 1:1" class="scripture-citation">[ዮሐ 1:1]</span></p>' },
           langCode: { type: 'string', example: 'am' },
           isFallback: { type: 'boolean', example: false },
-          availableLanguages: {
-            type: 'array',
-            items: { type: 'string' },
-            example: ['am', 'en', 'om', 'ti'],
-          },
-          media: {
-            type: 'array',
-            items: { $ref: '#/components/schemas/ContentMedia' },
+          category: {
+            type: 'object',
+            properties: {
+              id: { type: 'integer', example: 1 },
+              slug: { type: 'string', example: 'christianity' },
+              name: { type: 'string', example: 'በእንተ ክርስትና' },
+            },
           },
           tags: {
             type: 'array',
@@ -418,14 +704,96 @@ export const openApiSpec = {
               type: 'object',
               properties: {
                 id: { type: 'integer', example: 1 },
-                slug: { type: 'string', example: 'christology' },
-                name: { type: 'string', example: 'ክርስቶሎጂ | Christology' },
+                slug: { type: 'string', example: 'trinity' },
+                name: { type: 'string', example: 'ሥላሴ' },
               },
             },
           },
-          pdfEnabled: { type: 'boolean', example: true },
+        },
+      },
+      ArticleDetail: {
+        type: 'object',
+        properties: {
+          id: { type: 'integer', example: 1 },
+          categoryId: { type: 'integer', example: 1 },
+          category: {
+            type: 'object',
+            properties: {
+              id: { type: 'integer', example: 1 },
+              slug: { type: 'string', example: 'christianity' },
+              name: { type: 'string', example: 'በእንተ ክርስትና' },
+            },
+          },
+          authorName: { type: 'string', example: 'ዘአትናቴዎስ' },
+          coverImage: { type: 'string', example: 'https://images.unsplash.com/photo-1548625361-195fe578ae5a' },
+          pdfEnabled: { type: 'integer', example: 1 },
           viewCount: { type: 'integer', example: 342 },
           publishedAt: { type: 'string', format: 'date-time' },
+          updatedAt: { type: 'string', format: 'date-time' },
+          title: { type: 'string', example: 'የኢየሱስ ክርስቶስ አምላክነት በቅዱሳት መጻሕፍት ብርሃን' },
+          slug: { type: 'string', example: 'deity-of-jesus-christ-scripture' },
+          summary: { type: 'string', example: 'ጥናታዊ የዕቅበተ እምነት ማብራሪያ።' },
+          body: { type: 'string', example: '<p>የጌታችንና የመድኃኒታችን የኢየሱስ ክርስቶስ ፍጹም አምላክነት... <span data-ref="ዮሐ 1:1" class="scripture-citation">[ዮሐ 1:1]</span></p>' },
+          pdfFilePath: { type: 'string', example: '/uploads/pdf/article_1_1723901234_am.pdf' },
+          langCode: { type: 'string', example: 'am' },
+          isFallback: { type: 'boolean', example: false },
+          fallbackFrom: { type: 'string', example: 'ti' },
+          citations: {
+            type: 'array',
+            items: { type: 'string' },
+            example: ['ዮሐ 1:1', 'ዮሐ 10:30'],
+          },
+          tags: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                id: { type: 'integer', example: 1 },
+                slug: { type: 'string', example: 'trinity' },
+                name: { type: 'string', example: 'ሥላሴ' },
+              },
+            },
+          },
+          media: {
+            type: 'array',
+            items: { $ref: '#/components/schemas/ContentMedia' },
+          },
+          availableTranslations: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                langCode: { type: 'string', example: 'am' },
+                slug: { type: 'string', example: 'deity-of-jesus-christ-scripture' },
+                title: { type: 'string', example: 'የኢየሱስ ክርስቶስ አምላክነት...' },
+              },
+            },
+          },
+        },
+      },
+      DailyReading: {
+        type: 'object',
+        properties: {
+          date: { type: 'string', example: '2026-08-18' },
+          dayOfYear: { type: 'integer', example: 230 },
+          ethiopianDate: { type: 'string', example: 'ነሐሴ 12 2018' },
+          langCode: { type: 'string', example: 'am' },
+          saintOfTheDay: { type: 'string', example: 'ቅዱስ አትናቴዎስ ሐዋርያዊ' },
+          scriptureReading: {
+            type: 'object',
+            properties: {
+              reference: { type: 'string', example: 'ዮሐ 1:1-5' },
+              text: { type: 'string', example: 'በመጀመሪያ ቃል ነበረ...' },
+            },
+          },
+          patristicQuote: {
+            type: 'object',
+            properties: {
+              author: { type: 'string', example: 'ቅዱስ አትናቴዎስ' },
+              source: { type: 'string', example: 'ነገረ ሥጋዌ' },
+              quote: { type: 'string', example: 'እኛ አማልክት እንሆን ዘንድ እርሱ ሰው ሆነ።' },
+            },
+          },
         },
       },
       SearchResultItem: {
