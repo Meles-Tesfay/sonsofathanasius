@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { db } from '../db/index.js';
 import { content, contentTranslations, contentMedia, contentTags, categories, tags } from '../db/schema.js';
 import { eq, and, inArray } from 'drizzle-orm';
+import { DrizzleQueryError } from 'drizzle-orm/errors';
 import { sendSuccess } from '../utils/response.js';
 import { BadRequestError, NotFoundError } from '../middleware/errorHandler.js';
 import { processArticleContent } from '../services/sanitizerService.js';
@@ -28,7 +29,7 @@ import {
 
 export const CreateTranslationSchema = z.object({
   langCode: z.enum(['am', 'en', 'om', 'ti'], {
-    errorMap: () => ({ message: 'Language code must be one of: am, en, om, ti' }),
+    error: 'Language code must be one of: am, en, om, ti',
   }),
   title: z.string().trim().min(2, 'Title must be at least 2 characters').max(255),
   slug: z.string().trim().max(240).optional(),
@@ -57,7 +58,7 @@ export const CreateArticleSchema = z.object({
   publishedAt: z
     .union([
       z.string().refine((val) => !isNaN(Date.parse(val)), {
-        message: 'publishedAt must be a valid ISO date string',
+        error: 'publishedAt must be a valid ISO date string',
       }),
       z.date(),
     ])
@@ -80,7 +81,7 @@ export const UpdateArticleSchema = z.object({
   publishedAt: z
     .union([
       z.string().refine((val) => !isNaN(Date.parse(val)), {
-        message: 'publishedAt must be a valid ISO date string',
+        error: 'publishedAt must be a valid ISO date string',
       }),
       z.date(),
     ])
@@ -107,11 +108,12 @@ async function runWithTransactionRetry<T>(fn: () => Promise<T>, maxRetries = 3):
       return await fn();
     } catch (err: unknown) {
       attempt++;
+      const driverErr = err instanceof DrizzleQueryError ? err.cause : err;
       const isTransient =
-        err &&
-        typeof err === 'object' &&
-        (('code' in err && (err.code === 'ER_CHECKREAD' || err.code === 'ER_LOCK_DEADLOCK' || err.code === 'ER_DUP_ENTRY')) ||
-         ('errno' in err && (err.errno === 1020 || err.errno === 1213 || err.errno === 1062)));
+        driverErr &&
+        typeof driverErr === 'object' &&
+        (('code' in driverErr && (driverErr.code === 'ER_CHECKREAD' || driverErr.code === 'ER_LOCK_DEADLOCK' || driverErr.code === 'ER_DUP_ENTRY')) ||
+         ('errno' in driverErr && (driverErr.errno === 1020 || driverErr.errno === 1213 || driverErr.errno === 1062)));
 
       if (isTransient && attempt < maxRetries) {
         await new Promise((resolve) => setTimeout(resolve, 50 * attempt));
@@ -231,7 +233,7 @@ export async function upsertTranslationTx(
 export async function createArticleController(req: Request, res: Response): Promise<void> {
   const parseResult = CreateArticleSchema.safeParse(req.body);
   if (!parseResult.success) {
-    const errorMsg = parseResult.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ');
+    const errorMsg = parseResult.error.issues.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ');
     throw new BadRequestError(errorMsg || 'Invalid article payload');
   }
 
@@ -372,7 +374,7 @@ export async function updateArticleController(req: Request, res: Response): Prom
 
   const parseResult = UpdateArticleSchema.safeParse(req.body);
   if (!parseResult.success) {
-    const errorMsg = parseResult.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ');
+    const errorMsg = parseResult.error.issues.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ');
     throw new BadRequestError(errorMsg || 'Invalid article payload');
   }
 
@@ -697,7 +699,7 @@ export async function upsertTranslationController(req: Request, res: Response): 
 
   const parseResult = UpsertTranslationSchema.safeParse(req.body);
   if (!parseResult.success) {
-    const errorMsg = parseResult.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ');
+    const errorMsg = parseResult.error.issues.map((e) => `${e.path.join('.')}: ${e.message}`).join(', ');
     throw new BadRequestError(errorMsg || 'Invalid translation payload');
   }
 

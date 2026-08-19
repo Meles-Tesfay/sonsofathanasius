@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 export const SearchQuerySchema = z.object({
   q: z
-    .string({ required_error: 'Query parameter "q" is required' })
+    .string({ error: 'Query parameter "q" is required' })
     .min(1, 'Query parameter "q" cannot be empty')
     .max(200, 'Search query is too long (max 200 characters)')
     .trim(),

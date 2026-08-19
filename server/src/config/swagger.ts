@@ -945,6 +945,7 @@ export const openApiSpec = {
           email: { type: 'string', example: 'john.doe@example.com' },
           subject: { type: 'string', example: 'Question about theology' },
           message: { type: 'string', example: 'I would like to ask about the trinity.' },
+          website: { type: 'string', example: '', description: 'Anti-spam honeypot field (must be left empty)' },
         },
         required: ['name', 'email', 'message'],
       },

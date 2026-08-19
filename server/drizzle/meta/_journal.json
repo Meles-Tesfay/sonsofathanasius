@@ -8,6 +8,13 @@
       "when": 1786917885050,
       "tag": "0000_bouncy_ravenous",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1787168984836,
+      "tag": "0001_fair_guardian",
+      "breakpoints": true
     }
   ]
 }

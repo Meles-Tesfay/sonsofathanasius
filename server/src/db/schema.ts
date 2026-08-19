@@ -192,3 +192,28 @@ export const adminSessionsRelations = relations(adminSessions, ({ one }) => ({
     references: [admins.id],
   }),
 }));
+
+// ==========================================
+// 8. CONTACT MESSAGES TABLE
+// ==========================================
+export const contactMessages = mysqlTable(
+  'contact_messages',
+  {
+    id: int('id').autoincrement().primaryKey(),
+    name: varchar('name', { length: 100 }).notNull(),
+    email: varchar('email', { length: 255 }).notNull(),
+    subject: varchar('subject', { length: 200 }),
+    message: text('message').notNull(),
+    ipAddress: varchar('ip_address', { length: 45 }),
+    userAgent: text('user_agent'),
+    status: mysqlEnum('status', ['new', 'read', 'replied', 'archived', 'spam']).default('new'),
+    createdAt: timestamp('created_at').defaultNow(),
+    readAt: timestamp('read_at'),
+    repliedAt: timestamp('replied_at'),
+  },
+  (table) => [
+    index('idx_contact_status_created').on(table.status, table.createdAt),
+    index('idx_contact_email').on(table.email),
+  ]
+);
+

@@ -33,7 +33,7 @@ const DUMMY_SCRYPT_HASH =
 export async function loginController(req: Request, res: Response): Promise<void> {
   const parseResult = LoginSchema.safeParse(req.body);
   if (!parseResult.success) {
-    const errorMsg = parseResult.error.errors.map((e) => e.message).join(', ');
+    const errorMsg = parseResult.error.issues.map((e) => e.message).join(', ');
     throw new BadRequestError(errorMsg || 'Invalid credentials payload');
   }
 

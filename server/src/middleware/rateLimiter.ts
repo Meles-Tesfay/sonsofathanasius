@@ -69,10 +69,10 @@ export const searchLimiter = rateLimit({
   },
 });
 
-// 7. Contact Form Submission Limiter (5 requests / 15 mins)
+// 7. Contact Form Submission Limiter (1 request / 15 mins)
 export const contactLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 5,
+  max: config.isTest ? 10000 : 1,
   standardHeaders: true,
   legacyHeaders: false,
   handler: (_req: Request, res: Response) => {
