@@ -41,6 +41,9 @@ router.use('/admin', adminRouter);
 // 9. Contact Form Submission Route (B8)
 router.use('/contact', contactRouter);
 
+// 8. Contact Form Route
+router.use('/contact', contactRouter);
+
 /**
  * Health Check & API Status Endpoint
  * GET /api/v1/health
