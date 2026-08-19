@@ -5,7 +5,10 @@ import { getCacheMetrics } from '../cache/metrics.js';
 import docsRouter from './docs.js';
 import searchRouter from './search.js';
 import uploadRouter from './upload.js';
-import pdfRouter from './pdf.js';
+import categoriesRouter from './categories.js';
+import tagsRouter from './tags.js';
+import articlesRouter from './articles.js';
+import dailyRouter from './daily.js';
 
 const router = Router();
 
@@ -18,8 +21,11 @@ router.use('/search', searchRouter);
 // 3. Admin Storage & Uploads Route
 router.use('/admin', uploadRouter);
 
-// 4. Articles & PDF Routes
-router.use('/articles', pdfRouter);
+// 4. Public REST API Routes (Phase B6)
+router.use('/categories', categoriesRouter);
+router.use('/tags', tagsRouter);
+router.use('/articles', articlesRouter);  // Includes /articles/:slug/pdf
+router.use('/daily', dailyRouter);
 
 /**
  * Health Check & API Status Endpoint
