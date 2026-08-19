@@ -20,6 +20,14 @@ export const config = {
     ttl: Number(process.env.CACHE_DEFAULT_TTL) || 600,
   },
   jwtSecret: process.env.JWT_SECRET || 'default_secret_key_change_me',
+  session: {
+    cookieName: 'soa_admin_session',
+    cookiePath: '/api/v1/admin',
+    maxAgeMs: 7 * 24 * 60 * 60 * 1000,       // 7 days
+    sessionCacheTtlMs: 60_000,                 // 60s LRU buffer for verifyAdminSession
+    sessionCacheMax: 100,                      // max cached sessions
+    bcryptRounds: 12,
+  },
   storage: {
     uploadsDir: process.env.UPLOADS_DIR || path.resolve(process.cwd(), 'uploads'),
     get coversDir(): string {
