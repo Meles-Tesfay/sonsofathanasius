@@ -307,8 +307,15 @@ export async function getArticleBySlug(
   const { lang } = req.validatedQuery!;
 
   if (!slug || typeof slug !== 'string') {
-    sendError(res, 'Article slug is required', 400);
-    return;
+    res.status(400);
+    return {
+      success: false,
+      error: 'Article slug is required',
+      meta: {
+        lang,
+        timestamp: new Date().toISOString(),
+      },
+    };
   }
 
   let isFallback = false;
@@ -328,8 +335,15 @@ export async function getArticleBySlug(
 
   // 404 — article does not exist at all
   if (!translationRow) {
-    sendError(res, `Article not found: ${slug}`, 404);
-    return;
+    res.status(404);
+    return {
+      success: false,
+      error: `Article not found: ${slug}`,
+      meta: {
+        lang,
+        timestamp: new Date().toISOString(),
+      },
+    };
   }
 
   const contentId = translationRow.contentId;
