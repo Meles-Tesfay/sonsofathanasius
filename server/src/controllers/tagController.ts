@@ -1,60 +1,63 @@
 import { Request, Response } from 'express';
-import { ValidatedRequest } from '../validators/queryValidator.js';
-import { TagQueryParams } from '../validators/publicQueryValidator.js';
 import { db } from '../db/index.js';
 import { tags, contentTags, content } from '../db/schema.js';
-import { eq, sql, and } from 'drizzle-orm';
-import type { TagDTO } from '../types/index.js';
+import { eq, count, asc, desc } from 'drizzle-orm';
+
+export interface TagWithCount {
+  id: number;
+  slug: string;
+  name: string;
+  articleCount: number;
+}
 
 /**
- * List all tags with published article counts.
- * GET /api/v1/tags?lang=am
- *
- * Tags are language-independent (stored as bilingual strings like "ሥላሴ | Trinity").
- * The `lang` parameter is accepted for API consistency but does not affect filtering.
- *
- * Returns raw data for cachedRoute() — do NOT call res.json() directly.
+ * List all available tags with active article counts
+ * GET /api/v1/tags
  */
-export async function listTags(
-  req: ValidatedRequest<TagQueryParams>,
-  _res: Response
-): Promise<unknown> {
-  const { lang } = req.validatedQuery!;
-
-  // Fetch all tags with count of published articles via LEFT JOIN
-  const rows = await db
-    .select({
-      id: tags.id,
-      slug: tags.slug,
-      name: tags.name,
-      articleCount: sql<number>`COUNT(DISTINCT ${content.id})`.as('article_count'),
-    })
+export async function getTags(_req: Request, _res: Response) {
+  // 1. Query all tags
+  const allTags = await db
+    .select()
     .from(tags)
-    .leftJoin(contentTags, eq(contentTags.tagId, tags.id))
-    .leftJoin(
-      content,
-      and(
-        eq(content.id, contentTags.contentId),
-        eq(content.status, 'published')
-      )
-    )
-    .groupBy(tags.id, tags.slug, tags.name)
-    .orderBy(tags.name);
+    .orderBy(asc(tags.name));
 
-  const result: TagDTO[] = rows.map((row) => ({
-    id: row.id,
-    slug: row.slug,
-    name: row.name,
-    articleCount: row.articleCount ?? 0,
+  // 2. Query article count per tag for published articles
+  const tagArticleCounts = await db
+    .select({
+      tagId: contentTags.tagId,
+      count: count(contentTags.contentId),
+    })
+    .from(contentTags)
+    .innerJoin(content, eq(contentTags.contentId, content.id))
+    .where(eq(content.status, 'published'))
+    .groupBy(contentTags.tagId);
+
+  const countMap = new Map<number, number>();
+  for (const item of tagArticleCounts) {
+    countMap.set(item.tagId, Number(item.count));
+  }
+
+  // 3. Format response and sort by articleCount DESC, then name ASC
+  const result: TagWithCount[] = allTags.map((tag) => ({
+    id: tag.id,
+    slug: tag.slug,
+    name: tag.name,
+    articleCount: countMap.get(tag.id) || 0,
   }));
+
+  result.sort((a, b) => {
+    if (b.articleCount !== a.articleCount) {
+      return b.articleCount - a.articleCount;
+    }
+    return a.name.localeCompare(b.name);
+  });
 
   return {
     success: true,
     data: result,
     meta: {
-      total: result.length,
-      lang,
       timestamp: new Date().toISOString(),
+      total: result.length,
     },
   };
 }

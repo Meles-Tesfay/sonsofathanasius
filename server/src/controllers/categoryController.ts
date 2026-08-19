@@ -1,106 +1,99 @@
 import { Request, Response } from 'express';
-import { ValidatedRequest } from '../validators/queryValidator.js';
-import { CategoryQueryParams } from '../validators/publicQueryValidator.js';
 import { db } from '../db/index.js';
 import { categories, content } from '../db/schema.js';
-import { eq, sql, and } from 'drizzle-orm';
-import type { SupportedLanguage, CategoryListItem } from '../types/index.js';
+import { eq, and, count, asc } from 'drizzle-orm';
+import { sendSuccess } from '../utils/response.js';
 
-/**
- * Resolve the localized name for a category row based on requested language.
- * Falls back to English if the requested language translation is null.
- */
-function resolveLocalizedName(
-  row: {
-    nameEn: string;
-    nameAm: string | null;
-    nameOm: string | null;
-    nameTi: string | null;
-  },
-  lang: SupportedLanguage
-): string {
-  const map: Record<SupportedLanguage, string | null> = {
-    am: row.nameAm,
-    en: row.nameEn,
-    om: row.nameOm,
-    ti: row.nameTi,
-  };
-  return map[lang] ?? row.nameEn;
+export interface LocalizedCategory {
+  id: number;
+  slug: string;
+  name: string;
+  description: string | null;
+  articleCount: number;
+  sortOrder: number;
 }
 
 /**
- * Resolve the localized description for a category row based on requested language.
- * Falls back to English if the requested language translation is null.
+ * Helper to pick localized name & description with fallback
  */
-function resolveLocalizedDescription(
-  row: {
-    descriptionEn: string | null;
-    descriptionAm: string | null;
-    descriptionOm: string | null;
-    descriptionTi: string | null;
-  },
-  lang: SupportedLanguage
-): string | null {
-  const map: Record<SupportedLanguage, string | null> = {
-    am: row.descriptionAm,
-    en: row.descriptionEn,
-    om: row.descriptionOm,
-    ti: row.descriptionTi,
-  };
-  return map[lang] ?? row.descriptionEn;
+function getLocalizedCategoryFields(
+  row: typeof categories.$inferSelect,
+  lang: string
+): { name: string; description: string | null } {
+  switch (lang.toLowerCase()) {
+    case 'en':
+      return {
+        name: row.nameEn || row.nameAm || row.slug,
+        description: row.descriptionEn ?? row.descriptionAm ?? null,
+      };
+    case 'om':
+      return {
+        name: row.nameOm || row.nameEn || row.nameAm || row.slug,
+        description: row.descriptionOm ?? row.descriptionEn ?? row.descriptionAm ?? null,
+      };
+    case 'ti':
+      return {
+        name: row.nameTi || row.nameAm || row.nameEn || row.slug,
+        description: row.descriptionTi ?? row.descriptionAm ?? row.descriptionEn ?? null,
+      };
+    case 'am':
+    default:
+      return {
+        name: row.nameAm || row.nameEn || row.slug,
+        description: row.descriptionAm ?? row.descriptionEn ?? null,
+      };
+  }
 }
 
 /**
- * List all active categories with localized names and published article counts.
+ * List all active categories with localized metadata & article counts
  * GET /api/v1/categories?lang=am
- *
- * Returns raw data for cachedRoute() — do NOT call res.json() directly.
  */
-export async function listCategories(
-  req: ValidatedRequest<CategoryQueryParams>,
-  _res: Response
-): Promise<unknown> {
-  const { lang } = req.validatedQuery!;
+export async function getCategories(req: Request, res: Response) {
+  const lang = (typeof req.query.lang === 'string' ? req.query.lang : 'am').toLowerCase();
 
-  // 1. Fetch all active categories ordered by sortOrder
-  const rows = await db
+  // 1. Fetch active categories
+  const activeCategories = await db
     .select()
     .from(categories)
     .where(eq(categories.isActive, 1))
-    .orderBy(categories.sortOrder);
+    .orderBy(asc(categories.sortOrder), asc(categories.id));
 
-  // 2. Fetch published article counts per category in a single query
-  const countRows = await db
+  // 2. Fetch published article count per category
+  const articleCounts = await db
     .select({
       categoryId: content.categoryId,
-      count: sql<number>`COUNT(*)`.as('count'),
+      count: count(content.id),
     })
     .from(content)
     .where(eq(content.status, 'published'))
     .groupBy(content.categoryId);
 
   const countMap = new Map<number, number>();
-  for (const row of countRows) {
-    countMap.set(row.categoryId, row.count);
+  for (const item of articleCounts) {
+    countMap.set(item.categoryId, Number(item.count));
   }
 
-  // 3. Map to CategoryListItem with localized fields
-  const result: CategoryListItem[] = rows.map((row) => ({
-    id: row.id,
-    slug: row.slug,
-    name: resolveLocalizedName(row, lang),
-    description: resolveLocalizedDescription(row, lang),
-    sortOrder: row.sortOrder ?? 0,
-    articleCount: countMap.get(row.id) ?? 0,
-  }));
+  // 3. Format localized response
+  const result: LocalizedCategory[] = activeCategories.map((cat) => {
+    const { name, description } = getLocalizedCategoryFields(cat, lang);
+    return {
+      id: cat.id,
+      slug: cat.slug,
+      name,
+      description,
+      articleCount: countMap.get(cat.id) || 0,
+      sortOrder: cat.sortOrder ?? 0,
+    };
+  });
 
   return {
     success: true,
     data: result,
     meta: {
-      total: result.length,
-      lang,
       timestamp: new Date().toISOString(),
+      lang,
+      total: result.length,
     },
   };
 }

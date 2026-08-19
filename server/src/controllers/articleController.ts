@@ -1,483 +1,561 @@
 import { Request, Response } from 'express';
-import { ValidatedRequest } from '../validators/queryValidator.js';
-import {
-  ArticleFeedQueryParams,
-  LatestArticlesQueryParams,
-  ArticleDetailQueryParams,
-} from '../validators/publicQueryValidator.js';
 import { db } from '../db/index.js';
 import {
   content,
   contentTranslations,
   categories,
-  contentMedia,
-  contentTags,
   tags,
+  contentTags,
+  contentMedia,
 } from '../db/schema.js';
-import { eq, and, sql, desc, inArray } from 'drizzle-orm';
-import { trackArticleView } from '../cache/viewCounter.js';
-import { sendError } from '../utils/response.js';
-import type {
-  SupportedLanguage,
-  ArticleFeedItem,
-  ArticleDetailResponse,
-} from '../types/index.js';
+import { eq, and, desc, asc, sql, inArray } from 'drizzle-orm';
+import { extractScriptureCitations } from '../services/citationParser.js';
+import { recordSlugIdMapping } from '../cache/viewCounter.js';
+import { NotFoundError } from '../middleware/errorHandler.js';
 
-// ── Helper: Resolve localized category name ─────────────────────
-function resolveCategoryName(
-  row: {
-    categoryNameEn: string;
-    categoryNameAm: string | null;
-    categoryNameOm: string | null;
-    categoryNameTi: string | null;
-  },
-  lang: SupportedLanguage
-): string {
-  const map: Record<SupportedLanguage, string | null> = {
-    am: row.categoryNameAm,
-    en: row.categoryNameEn,
-    om: row.categoryNameOm,
-    ti: row.categoryNameTi,
+export interface ArticleListItem {
+  id: number;
+  slug: string;
+  title: string;
+  summary: string | null;
+  authorName: string | null;
+  coverImage: string | null;
+  pdfEnabled: number | null;
+  viewCount: number | null;
+  publishedAt: Date | null;
+  langCode: string;
+  isFallback: boolean;
+  category: {
+    id: number;
+    slug: string;
+    name: string;
   };
-  return map[lang] ?? row.categoryNameEn;
+  tags: Array<{
+    id: number;
+    slug: string;
+    name: string;
+  }>;
 }
 
-// ── Helper: Fetch tags for a list of content IDs ────────────────
-async function fetchTagsForContentIds(
-  contentIds: number[]
-): Promise<Map<number, Array<{ slug: string; name: string }>>> {
-  const tagMap = new Map<number, Array<{ slug: string; name: string }>>();
-  if (contentIds.length === 0) return tagMap;
-
-  const rows = await db
-    .select({
-      contentId: contentTags.contentId,
-      slug: tags.slug,
-      name: tags.name,
-    })
-    .from(contentTags)
-    .innerJoin(tags, eq(tags.id, contentTags.tagId))
-    .where(inArray(contentTags.contentId, contentIds));
-
-  for (const row of rows) {
-    const existing = tagMap.get(row.contentId) ?? [];
-    existing.push({ slug: row.slug, name: row.name });
-    tagMap.set(row.contentId, existing);
-  }
-
-  return tagMap;
+export interface ArticleDetailResponse {
+  id: number;
+  categoryId: number;
+  category: {
+    id: number;
+    slug: string;
+    name: string;
+  };
+  authorName: string | null;
+  coverImage: string | null;
+  pdfEnabled: number | null;
+  viewCount: number | null;
+  publishedAt: Date | null;
+  updatedAt: Date | null;
+  langCode: string;
+  isFallback: boolean;
+  fallbackFrom?: string;
+  title: string;
+  slug: string;
+  summary: string | null;
+  body: string;
+  pdfFilePath: string | null;
+  citations: string[];
+  tags: Array<{
+    id: number;
+    slug: string;
+    name: string;
+  }>;
+  media: Array<{
+    id: number;
+    mediaKind: 'video' | 'audio';
+    platform: string;
+    embedId: string;
+    caption: string | null;
+  }>;
+  availableTranslations: Array<{
+    langCode: string;
+    slug: string;
+    title: string;
+  }>;
 }
-
-// ══════════════════════════════════════════════════════════════════
-// 1. ARTICLE FEED — GET /api/v1/articles
-// ══════════════════════════════════════════════════════════════════
 
 /**
- * Paginated article feed with optional category/tag filtering.
- * Returns raw envelope for cachedRoute().
+ * Helper to pick localized category name
  */
-export async function getArticleFeed(
-  req: ValidatedRequest<ArticleFeedQueryParams>,
-  _res: Response
-): Promise<unknown> {
-  const { lang, category, tag, page, limit, sort } = req.validatedQuery!;
+function getLocalizedCategoryName(
+  cat: { nameAm: string | null; nameEn: string; nameOm: string | null; nameTi: string | null; slug: string },
+  lang: string
+): string {
+  switch (lang.toLowerCase()) {
+    case 'en':
+      return cat.nameEn || cat.nameAm || cat.slug;
+    case 'om':
+      return cat.nameOm || cat.nameEn || cat.nameAm || cat.slug;
+    case 'ti':
+      return cat.nameTi || cat.nameAm || cat.nameEn || cat.slug;
+    case 'am':
+    default:
+      return cat.nameAm || cat.nameEn || cat.slug;
+  }
+}
+
+/**
+ * List paginated articles with multilingual fallback, category/tag filtering, and sorting
+ * GET /api/v1/articles?category={slug}&tag={slug}&page=1&limit=12&lang=am&sort=latest|popular
+ */
+export async function getArticles(req: Request, _res: Response) {
+  const lang = (typeof req.query.lang === 'string' ? req.query.lang : 'am').toLowerCase();
+  const categorySlug = typeof req.query.category === 'string' ? req.query.category.trim() : undefined;
+  const tagSlug = typeof req.query.tag === 'string' ? req.query.tag.trim() : undefined;
+  const sort = req.query.sort === 'popular' ? 'popular' : 'latest';
+  const page = Math.max(1, parseInt(String(req.query.page), 10) || 1);
+  const limit = Math.min(50, Math.max(1, parseInt(String(req.query.limit), 10) || 12));
   const offset = (page - 1) * limit;
 
-  // ── Build WHERE conditions ──
-  const conditions = [
-    eq(content.status, 'published'),
-    eq(contentTranslations.langCode, lang),
-  ];
-
-  if (category) {
-    conditions.push(eq(categories.slug, category));
+  // 1. Resolve Category ID filter if requested
+  let categoryIdFilter: number | undefined;
+  if (categorySlug) {
+    const cat = await db.select().from(categories).where(eq(categories.slug, categorySlug)).limit(1);
+    if (cat.length > 0) {
+      categoryIdFilter = cat[0].id;
+    } else {
+      // Requested category does not exist -> return empty page
+      return {
+        success: true,
+        data: [],
+        meta: {
+          page,
+          limit,
+          total: 0,
+          totalPages: 0,
+          hasNext: false,
+          hasPrev: false,
+          timestamp: new Date().toISOString(),
+          lang,
+          category: categorySlug,
+        },
+      };
+    }
   }
 
-  // ── Build base query ──
-  const baseQuery = db
-    .select({
-      id: content.id,
-      slug: contentTranslations.slug,
-      title: contentTranslations.title,
-      summary: contentTranslations.summary,
-      coverImage: content.coverImage,
-      authorName: content.authorName,
-      categorySlug: categories.slug,
-      categoryNameEn: categories.nameEn,
-      categoryNameAm: categories.nameAm,
-      categoryNameOm: categories.nameOm,
-      categoryNameTi: categories.nameTi,
-      langCode: contentTranslations.langCode,
-      publishedAt: content.publishedAt,
-      viewCount: content.viewCount,
-    })
+  // 2. Resolve Tag ID filter if requested
+  let tagContentIds: number[] | undefined;
+  if (tagSlug) {
+    const tagRows = await db.select().from(tags).where(eq(tags.slug, tagSlug)).limit(1);
+    if (tagRows.length > 0) {
+      const tagId = tagRows[0].id;
+      const contentTagRows = await db
+        .select({ contentId: contentTags.contentId })
+        .from(contentTags)
+        .where(eq(contentTags.tagId, tagId));
+      tagContentIds = contentTagRows.map((r) => r.contentId);
+      if (tagContentIds.length === 0) {
+        return {
+          success: true,
+          data: [],
+          meta: {
+            page,
+            limit,
+            total: 0,
+            totalPages: 0,
+            hasNext: false,
+            hasPrev: false,
+            timestamp: new Date().toISOString(),
+            lang,
+            tag: tagSlug,
+          },
+        };
+      }
+    } else {
+      // Requested tag does not exist
+      return {
+        success: true,
+        data: [],
+        meta: {
+          page,
+          limit,
+          total: 0,
+          totalPages: 0,
+          hasNext: false,
+          hasPrev: false,
+          timestamp: new Date().toISOString(),
+          lang,
+          tag: tagSlug,
+        },
+      };
+    }
+  }
+
+  // 3. Build conditions for published articles
+  const conditions = [eq(content.status, 'published')];
+  if (categoryIdFilter !== undefined) {
+    conditions.push(eq(content.categoryId, categoryIdFilter));
+  }
+  if (tagContentIds !== undefined) {
+    conditions.push(inArray(content.id, tagContentIds));
+  }
+
+  const whereClause = and(...conditions);
+
+  // 4. Count total matching articles
+  const [totalCountResult] = await db
+    .select({ count: sql<number>`count(*)` })
     .from(content)
-    .innerJoin(contentTranslations, eq(contentTranslations.contentId, content.id))
-    .innerJoin(categories, eq(categories.id, content.categoryId))
-    .where(and(...conditions));
-
-  // ── Tag filtering via EXISTS subquery ──
-  // If tag filter is provided, wrap with an additional filter
-  let filteredQuery = baseQuery;
-  if (tag) {
-    const tagSubquery = db
-      .select({ contentId: contentTags.contentId })
-      .from(contentTags)
-      .innerJoin(tags, eq(tags.id, contentTags.tagId))
-      .where(and(
-        eq(tags.slug, tag),
-        eq(contentTags.contentId, content.id)
-      ));
-
-    conditions.push(sql`EXISTS (${tagSubquery})`);
-
-    // Rebuild with tag condition
-    filteredQuery = db
-      .select({
-        id: content.id,
-        slug: contentTranslations.slug,
-        title: contentTranslations.title,
-        summary: contentTranslations.summary,
-        coverImage: content.coverImage,
-        authorName: content.authorName,
-        categorySlug: categories.slug,
-        categoryNameEn: categories.nameEn,
-        categoryNameAm: categories.nameAm,
-        categoryNameOm: categories.nameOm,
-        categoryNameTi: categories.nameTi,
-        langCode: contentTranslations.langCode,
-        publishedAt: content.publishedAt,
-        viewCount: content.viewCount,
-      })
-      .from(content)
-      .innerJoin(contentTranslations, eq(contentTranslations.contentId, content.id))
-      .innerJoin(categories, eq(categories.id, content.categoryId))
-      .where(and(...conditions));
-  }
-
-  // ── Sorting ──
-  const orderColumn = sort === 'popular' ? content.viewCount : content.publishedAt;
-
-  // ── Execute data + count queries in parallel ──
-  const [rows, countResult] = await Promise.all([
-    filteredQuery
-      .orderBy(desc(orderColumn))
-      .limit(limit)
-      .offset(offset),
-    db
-      .select({ count: sql<number>`COUNT(*)`.as('count') })
-      .from(content)
-      .innerJoin(contentTranslations, eq(contentTranslations.contentId, content.id))
-      .innerJoin(categories, eq(categories.id, content.categoryId))
-      .where(and(...conditions)),
-  ]);
-
-  const total = countResult[0]?.count ?? 0;
+    .where(whereClause);
+  const total = Number(totalCountResult?.count || 0);
   const totalPages = Math.ceil(total / limit) || 1;
 
-  // ── Fetch tags for all articles in batch ──
-  const contentIds = rows.map((r) => r.id);
-  const tagMap = await fetchTagsForContentIds(contentIds);
+  if (total === 0) {
+    return {
+      success: true,
+      data: [],
+      meta: {
+        page,
+        limit,
+        total: 0,
+        totalPages: 0,
+        hasNext: false,
+        hasPrev: false,
+        timestamp: new Date().toISOString(),
+        lang,
+      },
+    };
+  }
 
-  // ── Map to ArticleFeedItem ──
-  const articles: ArticleFeedItem[] = rows.map((row) => ({
-    id: row.id,
-    slug: row.slug,
-    title: row.title,
-    summary: row.summary,
-    coverImage: row.coverImage,
-    authorName: row.authorName,
-    categorySlug: row.categorySlug,
-    categoryName: resolveCategoryName(row, lang),
-    langCode: row.langCode,
-    publishedAt: row.publishedAt ? row.publishedAt.toISOString() : null,
-    viewCount: row.viewCount ?? 0,
-    tags: tagMap.get(row.id) ?? [],
-  }));
+  // 5. Query paginated article content rows
+  const sortClause = sort === 'popular'
+    ? [desc(content.viewCount), desc(content.publishedAt)]
+    : [desc(content.publishedAt), desc(content.id)];
+
+  const matchedArticles = await db
+    .select({
+      id: content.id,
+      categoryId: content.categoryId,
+      authorName: content.authorName,
+      coverImage: content.coverImage,
+      pdfEnabled: content.pdfEnabled,
+      viewCount: content.viewCount,
+      publishedAt: content.publishedAt,
+      catId: categories.id,
+      catSlug: categories.slug,
+      catNameEn: categories.nameEn,
+      catNameAm: categories.nameAm,
+      catNameOm: categories.nameOm,
+      catNameTi: categories.nameTi,
+    })
+    .from(content)
+    .innerJoin(categories, eq(content.categoryId, categories.id))
+    .where(whereClause)
+    .orderBy(...sortClause)
+    .limit(limit)
+    .offset(offset);
+
+  const contentIds = matchedArticles.map((a) => a.id);
+
+  // 6. Batch fetch all translations for matched articles
+  const allTranslations = await db
+    .select()
+    .from(contentTranslations)
+    .where(inArray(contentTranslations.contentId, contentIds));
+
+  // Map translations by contentId
+  const translationsByContent = new Map<number, typeof contentTranslations.$inferSelect[]>();
+  for (const trans of allTranslations) {
+    const list = translationsByContent.get(trans.contentId) || [];
+    list.push(trans);
+    translationsByContent.set(trans.contentId, list);
+  }
+
+  // 7. Batch fetch tags for matched articles
+  const articleTagsRows = await db
+    .select({
+      contentId: contentTags.contentId,
+      tagId: tags.id,
+      tagSlug: tags.slug,
+      tagName: tags.name,
+    })
+    .from(contentTags)
+    .innerJoin(tags, eq(contentTags.tagId, tags.id))
+    .where(inArray(contentTags.contentId, contentIds));
+
+  const tagsByContent = new Map<number, Array<{ id: number; slug: string; name: string }>>();
+  for (const row of articleTagsRows) {
+    const list = tagsByContent.get(row.contentId) || [];
+    list.push({ id: row.tagId, slug: row.tagSlug, name: row.tagName });
+    tagsByContent.set(row.contentId, list);
+  }
+
+  // 8. Assemble localized items with smart fallback
+  const items: ArticleListItem[] = matchedArticles.map((article) => {
+    const translations = translationsByContent.get(article.id) || [];
+    
+    // Attempt requested language
+    let chosen = translations.find((t) => t.langCode.toLowerCase() === lang);
+    let isFallback = false;
+
+    // Fallback to Amharic if requested lang is not found
+    if (!chosen) {
+      chosen = translations.find((t) => t.langCode.toLowerCase() === 'am');
+      if (chosen) {
+        isFallback = true;
+      }
+    }
+
+    // Fallback to first available translation if neither requested nor Amharic exists
+    if (!chosen && translations.length > 0) {
+      chosen = translations[0];
+      isFallback = true;
+    }
+
+    const localizedCategoryName = getLocalizedCategoryName(
+      {
+        nameAm: article.catNameAm,
+        nameEn: article.catNameEn,
+        nameOm: article.catNameOm,
+        nameTi: article.catNameTi,
+        slug: article.catSlug,
+      },
+      lang
+    );
+
+    return {
+      id: article.id,
+      slug: chosen?.slug || `article-${article.id}`,
+      title: chosen?.title || 'Untitled',
+      summary: chosen?.summary || null,
+      authorName: article.authorName,
+      coverImage: article.coverImage,
+      pdfEnabled: article.pdfEnabled,
+      viewCount: article.viewCount,
+      publishedAt: article.publishedAt,
+      langCode: chosen?.langCode || lang,
+      isFallback,
+      category: {
+        id: article.catId,
+        slug: article.catSlug,
+        name: localizedCategoryName,
+      },
+      tags: tagsByContent.get(article.id) || [],
+    };
+  });
 
   return {
     success: true,
-    data: articles,
+    data: items,
     meta: {
       page,
       limit,
       total,
       totalPages,
-      lang,
-      category: category || null,
-      tag: tag || null,
-      sort,
+      hasNext: page < totalPages,
+      hasPrev: page > 1,
       timestamp: new Date().toISOString(),
+      lang,
+      category: categorySlug,
+      tag: tagSlug,
+      sort,
     },
   };
 }
 
-// ══════════════════════════════════════════════════════════════════
-// 2. LATEST ARTICLES — GET /api/v1/articles/latest
-// ══════════════════════════════════════════════════════════════════
+/**
+ * Get latest articles feed for homepage hero/grid
+ * GET /api/v1/articles/latest?lang=am&limit=6
+ */
+export async function getLatestArticles(req: Request, res: Response) {
+  req.query.sort = 'latest';
+  req.query.page = '1';
+  if (!req.query.limit) {
+    req.query.limit = '6';
+  }
+  return getArticles(req, res);
+}
 
 /**
- * Returns the N most recently published articles.
- * Returns raw envelope for cachedRoute().
+ * Get full article detail with smart multilingual fallback, citations, media, and tag relations
+ * GET /api/v1/articles/:slug?lang=am
  */
-export async function getLatestArticles(
-  req: ValidatedRequest<LatestArticlesQueryParams>,
-  _res: Response
-): Promise<unknown> {
-  const { lang, limit } = req.validatedQuery!;
+export async function getArticleBySlug(req: Request, _res: Response) {
+  const rawSlug = req.params.slug;
+  const slugParam = (typeof rawSlug === 'string' ? rawSlug : Array.isArray(rawSlug) ? rawSlug[0] : '')?.trim();
+  const requestedLang = (typeof req.query.lang === 'string' ? req.query.lang : 'am').toLowerCase();
 
-  const rows = await db
+  if (!slugParam) {
+    throw new NotFoundError('Article slug is required');
+  }
+
+  // 1. Resolve content translation by slug or ID
+  let contentId: number | null = null;
+
+  // Check if slug matches any translation
+  const matchedTranslation = await db
+    .select()
+    .from(contentTranslations)
+    .where(eq(contentTranslations.slug, slugParam))
+    .limit(1);
+
+  if (matchedTranslation.length > 0) {
+    contentId = matchedTranslation[0].contentId;
+  } else {
+    // If slug is numeric ID
+    const numericId = parseInt(slugParam, 10);
+    if (!isNaN(numericId) && String(numericId) === slugParam) {
+      contentId = numericId;
+    }
+  }
+
+  if (!contentId) {
+    throw new NotFoundError(`Article not found: ${slugParam}`);
+  }
+
+  // 2. Fetch parent content and category (verify published status)
+  const articleRows = await db
     .select({
       id: content.id,
-      slug: contentTranslations.slug,
-      title: contentTranslations.title,
-      summary: contentTranslations.summary,
-      coverImage: content.coverImage,
+      categoryId: content.categoryId,
       authorName: content.authorName,
-      categorySlug: categories.slug,
-      categoryNameEn: categories.nameEn,
-      categoryNameAm: categories.nameAm,
-      categoryNameOm: categories.nameOm,
-      categoryNameTi: categories.nameTi,
-      langCode: contentTranslations.langCode,
-      publishedAt: content.publishedAt,
+      coverImage: content.coverImage,
+      pdfEnabled: content.pdfEnabled,
       viewCount: content.viewCount,
+      status: content.status,
+      publishedAt: content.publishedAt,
+      updatedAt: content.updatedAt,
+      catId: categories.id,
+      catSlug: categories.slug,
+      catNameEn: categories.nameEn,
+      catNameAm: categories.nameAm,
+      catNameOm: categories.nameOm,
+      catNameTi: categories.nameTi,
     })
     .from(content)
-    .innerJoin(contentTranslations, eq(contentTranslations.contentId, content.id))
-    .innerJoin(categories, eq(categories.id, content.categoryId))
-    .where(
-      and(
-        eq(content.status, 'published'),
-        eq(contentTranslations.langCode, lang)
-      )
-    )
-    .orderBy(desc(content.publishedAt))
-    .limit(limit);
+    .innerJoin(categories, eq(content.categoryId, categories.id))
+    .where(and(eq(content.id, contentId), eq(content.status, 'published')))
+    .limit(1);
 
-  // Fetch tags in batch
-  const contentIds = rows.map((r) => r.id);
-  const tagMap = await fetchTagsForContentIds(contentIds);
+  if (articleRows.length === 0) {
+    throw new NotFoundError(`Article not found or not published: ${slugParam}`);
+  }
 
-  const articles: ArticleFeedItem[] = rows.map((row) => ({
-    id: row.id,
-    slug: row.slug,
-    title: row.title,
-    summary: row.summary,
-    coverImage: row.coverImage,
-    authorName: row.authorName,
-    categorySlug: row.categorySlug,
-    categoryName: resolveCategoryName(row, lang),
-    langCode: row.langCode,
-    publishedAt: row.publishedAt ? row.publishedAt.toISOString() : null,
-    viewCount: row.viewCount ?? 0,
-    tags: tagMap.get(row.id) ?? [],
+  const article = articleRows[0];
+
+  // 3. Fetch all translations for this article
+  const translations = await db
+    .select()
+    .from(contentTranslations)
+    .where(eq(contentTranslations.contentId, contentId));
+
+  if (translations.length === 0) {
+    throw new NotFoundError(`No translation content found for article: ${contentId}`);
+  }
+
+  // 4. Resolve translation with smart fallback
+  let chosenTranslation = translations.find((t) => t.langCode.toLowerCase() === requestedLang);
+  let isFallback = false;
+  let fallbackFrom: string | undefined;
+
+  if (!chosenTranslation) {
+    // Fall back to Amharic
+    chosenTranslation = translations.find((t) => t.langCode.toLowerCase() === 'am');
+    if (chosenTranslation) {
+      isFallback = true;
+      fallbackFrom = requestedLang;
+    }
+  }
+
+  if (!chosenTranslation) {
+    // Fall back to first available
+    chosenTranslation = translations[0];
+    isFallback = true;
+    fallbackFrom = requestedLang;
+  }
+
+  // 5. Fetch supplementary media
+  const mediaRows = await db
+    .select({
+      id: contentMedia.id,
+      mediaKind: contentMedia.mediaKind,
+      platform: contentMedia.platform,
+      embedId: contentMedia.embedId,
+      caption: contentMedia.caption,
+    })
+    .from(contentMedia)
+    .where(eq(contentMedia.contentId, contentId))
+    .orderBy(asc(contentMedia.sortOrder), asc(contentMedia.id));
+
+  // 6. Fetch associated tags
+  const tagRows = await db
+    .select({
+      id: tags.id,
+      slug: tags.slug,
+      name: tags.name,
+    })
+    .from(contentTags)
+    .innerJoin(tags, eq(contentTags.tagId, tags.id))
+    .where(eq(contentTags.contentId, contentId))
+    .orderBy(asc(tags.name));
+
+  // 7. Extract scripture citations
+  const citations = extractScriptureCitations(chosenTranslation.body);
+
+  // 8. Available translations list
+  const availableTranslations = translations.map((t) => ({
+    langCode: t.langCode,
+    slug: t.slug,
+    title: t.title,
   }));
 
-  return {
-    success: true,
-    data: articles,
-    meta: {
-      total: articles.length,
-      lang,
-      timestamp: new Date().toISOString(),
+  // 9. Localized Category Name
+  const localizedCategoryName = getLocalizedCategoryName(
+    {
+      nameAm: article.catNameAm,
+      nameEn: article.catNameEn,
+      nameOm: article.catNameOm,
+      nameTi: article.catNameTi,
+      slug: article.catSlug,
     },
-  };
-}
+    chosenTranslation.langCode
+  );
 
-// ══════════════════════════════════════════════════════════════════
-// 3. SINGLE ARTICLE DETAIL — GET /api/v1/articles/:slug
-//    With Smart Multilingual Fallback
-// ══════════════════════════════════════════════════════════════════
+  // 10. Cache slug-to-ID mappings in memory for fast O(1) view tracking on cache HITs
+  recordSlugIdMapping(slugParam, article.id);
+  recordSlugIdMapping(chosenTranslation.slug, article.id);
 
-/**
- * Fetch a single article by slug with Smart Fallback logic:
- *   1. Try requested lang + slug
- *   2. Fallback to Amharic ('am') + same slug  → isFallback = true
- *   3. Try slug across any language              → isFallback = true
- *   4. Return 404 if nothing found
- *
- * Returns raw envelope for cachedRoute().
- */
-export async function getArticleBySlug(
-  req: ValidatedRequest<ArticleDetailQueryParams>,
-  res: Response
-): Promise<unknown> {
-  const slug = req.params.slug;
-  const { lang } = req.validatedQuery!;
-
-  if (!slug || typeof slug !== 'string') {
-    res.status(400);
-    return {
-      success: false,
-      error: 'Article slug is required',
-      meta: {
-        lang,
-        timestamp: new Date().toISOString(),
-      },
-    };
-  }
-
-  let isFallback = false;
-  let translationRow = await fetchTranslationBySlugAndLang(slug, lang);
-
-  // Smart Fallback Step 2: Try Amharic version of the same slug
-  if (!translationRow && lang !== 'am') {
-    translationRow = await fetchTranslationBySlugAndLang(slug, 'am');
-    if (translationRow) isFallback = true;
-  }
-
-  // Smart Fallback Step 3: Try any language with this slug
-  if (!translationRow) {
-    translationRow = await fetchTranslationBySlugAnyLang(slug);
-    if (translationRow) isFallback = true;
-  }
-
-  // 404 — article does not exist at all
-  if (!translationRow) {
-    res.status(404);
-    return {
-      success: false,
-      error: `Article not found: ${slug}`,
-      meta: {
-        lang,
-        timestamp: new Date().toISOString(),
-      },
-    };
-  }
-
-  const contentId = translationRow.contentId;
-
-  // ── Parallel data fetches ──
-  const [availableLangs, mediaRows, articleTags] = await Promise.all([
-    // Available languages for this article
-    db
-      .select({ langCode: contentTranslations.langCode })
-      .from(contentTranslations)
-      .where(eq(contentTranslations.contentId, contentId)),
-    // Supplementary media (video/audio embeds)
-    db
-      .select()
-      .from(contentMedia)
-      .where(eq(contentMedia.contentId, contentId))
-      .orderBy(contentMedia.sortOrder),
-    // Tags
-    fetchTagsForContentIds([contentId]),
-  ]);
-
-  // Fire-and-forget view count tracking (non-blocking)
-  trackArticleView(contentId);
-
-  const result: ArticleDetailResponse = {
-    id: contentId,
-    slug: translationRow.slug,
-    title: translationRow.title,
-    summary: translationRow.summary,
-    body: translationRow.body,
-    coverImage: translationRow.coverImage,
-    authorName: translationRow.authorName,
-    categorySlug: translationRow.categorySlug,
-    categoryName: resolveCategoryName(translationRow, isFallback ? translationRow.langCode as SupportedLanguage : lang),
-    langCode: translationRow.langCode,
+  const responseData: ArticleDetailResponse = {
+    id: article.id,
+    categoryId: article.categoryId,
+    category: {
+      id: article.catId,
+      slug: article.catSlug,
+      name: localizedCategoryName,
+    },
+    authorName: article.authorName,
+    coverImage: article.coverImage,
+    pdfEnabled: article.pdfEnabled,
+    viewCount: article.viewCount,
+    publishedAt: article.publishedAt,
+    updatedAt: article.updatedAt,
+    langCode: chosenTranslation.langCode,
     isFallback,
-    publishedAt: translationRow.publishedAt ? translationRow.publishedAt.toISOString() : null,
-    updatedAt: translationRow.updatedAt ? translationRow.updatedAt.toISOString() : null,
-    viewCount: translationRow.viewCount ?? 0,
-    pdfEnabled: translationRow.pdfEnabled === 1,
-    availableLanguages: availableLangs.map((r) => r.langCode),
-    media: mediaRows.map((m) => ({
-      id: m.id,
-      contentId: m.contentId,
-      mediaKind: m.mediaKind,
-      platform: m.platform as 'youtube' | 'vimeo' | 'soundcloud' | 'self-hosted',
-      embedId: m.embedId,
-      caption: m.caption,
-      sortOrder: m.sortOrder ?? 0,
-    })),
-    tags: articleTags.get(contentId) ?? [],
+    fallbackFrom,
+    title: chosenTranslation.title,
+    slug: chosenTranslation.slug,
+    summary: chosenTranslation.summary,
+    body: chosenTranslation.body,
+    pdfFilePath: chosenTranslation.pdfFilePath,
+    citations,
+    tags: tagRows,
+    media: mediaRows,
+    availableTranslations,
   };
 
   return {
     success: true,
-    data: result,
+    data: responseData,
     meta: {
-      lang: translationRow.langCode,
-      requestedLang: lang,
-      isFallback,
       timestamp: new Date().toISOString(),
+      lang: chosenTranslation.langCode,
+      isFallback,
+      fallbackFrom,
     },
   };
-}
-
-// ── Internal: Fetch translation with full article data by slug + lang ──
-async function fetchTranslationBySlugAndLang(slug: string, lang: string) {
-  const rows = await db
-    .select({
-      contentId: content.id,
-      slug: contentTranslations.slug,
-      title: contentTranslations.title,
-      summary: contentTranslations.summary,
-      body: contentTranslations.body,
-      langCode: contentTranslations.langCode,
-      coverImage: content.coverImage,
-      authorName: content.authorName,
-      categorySlug: categories.slug,
-      categoryNameEn: categories.nameEn,
-      categoryNameAm: categories.nameAm,
-      categoryNameOm: categories.nameOm,
-      categoryNameTi: categories.nameTi,
-      publishedAt: content.publishedAt,
-      updatedAt: content.updatedAt,
-      viewCount: content.viewCount,
-      pdfEnabled: content.pdfEnabled,
-    })
-    .from(contentTranslations)
-    .innerJoin(content, eq(content.id, contentTranslations.contentId))
-    .innerJoin(categories, eq(categories.id, content.categoryId))
-    .where(
-      and(
-        eq(contentTranslations.slug, slug),
-        eq(contentTranslations.langCode, lang),
-        eq(content.status, 'published')
-      )
-    )
-    .limit(1);
-
-  return rows[0] ?? null;
-}
-
-// ── Internal: Fetch translation by slug in any language ──
-async function fetchTranslationBySlugAnyLang(slug: string) {
-  const rows = await db
-    .select({
-      contentId: content.id,
-      slug: contentTranslations.slug,
-      title: contentTranslations.title,
-      summary: contentTranslations.summary,
-      body: contentTranslations.body,
-      langCode: contentTranslations.langCode,
-      coverImage: content.coverImage,
-      authorName: content.authorName,
-      categorySlug: categories.slug,
-      categoryNameEn: categories.nameEn,
-      categoryNameAm: categories.nameAm,
-      categoryNameOm: categories.nameOm,
-      categoryNameTi: categories.nameTi,
-      publishedAt: content.publishedAt,
-      updatedAt: content.updatedAt,
-      viewCount: content.viewCount,
-      pdfEnabled: content.pdfEnabled,
-    })
-    .from(contentTranslations)
-    .innerJoin(content, eq(content.id, contentTranslations.contentId))
-    .innerJoin(categories, eq(categories.id, content.categoryId))
-    .where(
-      and(
-        eq(contentTranslations.slug, slug),
-        eq(content.status, 'published')
-      )
-    )
-    .limit(1);
-
-  return rows[0] ?? null;
 }

@@ -85,11 +85,12 @@ export async function getCached(
         return { payload: entry.payload, outcome: 'stale' };
       }
       throw err;
+    } finally {
+      inflight.delete(key);
     }
   })();
 
   inflight.set(key, flight);
-  void flight.finally(() => inflight.delete(key)); // Poison-pill cleanup guarantee
 
   const result = await flight;
   return {
@@ -100,7 +101,7 @@ export async function getCached(
 
 // ── 5. Declarative Cached Route Wrapper for Controllers ──────────────────
 export const cachedRoute = (
-  namespace: string,
+  namespace: string | ((req: Request) => string),
   freshMs: number,
   staleMs: number = 0
 ) => {
@@ -108,7 +109,8 @@ export const cachedRoute = (
     handler: (req: Request, res: Response) => Promise<unknown>
   ) => {
     return async (req: Request, res: Response, next: NextFunction) => {
-      const key = `${namespace}:${canonicalKey(req)}`;
+      const ns = typeof namespace === 'function' ? namespace(req) : namespace;
+      const key = `${ns}:${canonicalKey(req)}`;
 
       try {
         const { payload, source } = await getCached(

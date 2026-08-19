@@ -5,6 +5,7 @@ import { config } from '../config/index.js';
 import { db } from '../db/index.js';
 import { content, contentTranslations, categories } from '../db/schema.js';
 import { eq, and } from 'drizzle-orm';
+import { NotFoundError } from '../middleware/errorHandler.js';
 
 export interface ArticlePdfData {
   contentId: number;
@@ -127,7 +128,6 @@ interface LocalizedPdfLabels {
   headerTitle: string;
   headerSubtitle: string;
   authorLabel: string;
-  categoryLabel: string;
   dateLabel: string;
   defaultAuthor: string;
   footerQuote: string;
@@ -137,42 +137,38 @@ interface LocalizedPdfLabels {
 const LOCALIZED_LABELS: Record<string, LocalizedPdfLabels> = {
   am: {
     headerTitle: 'ደቂቀ አትናቴዎስ  |  SONS OF ATHANASIUS',
-    headerSubtitle: 'www.sonsofathanasius.com  •  የኢትዮጵያ ኦርቶዶክስ ተዋሕዶ ቤተ ክርስቲያን የዕቅበተ እምነት ዲጂታል ቤተ መጻሕፍት',
-    authorLabel: 'ደራሲ',
-    categoryLabel: 'ምድብ',
+    headerSubtitle: 'www.sonsofathanasius.com  •  ክርስቲያናዊ ዕቅበተ እምነት ማሕበር',
+    authorLabel: 'ጸሐፊ',
     dateLabel: 'ቀን',
-    defaultAuthor: 'ደቂቀ አትናቴዎስ',
-    footerQuote: '«የእግዚአብሔር ቃል ለዘላለም ጸንቶ ይኖራል።»  •  ደቂቀ አትናቴዎስ  •  www.sonsofathanasius.com',
+    defaultAuthor: 'ዘአትናቴዎስ',
+    footerQuote: '«ኢየሱስ ክርስቶስ ትላንትናም ዛሬም ለዘላለምም ያው ነው» (ዕብራውያን ፲፫:፰)  •  ደቂቀ አትናቴዎስ  •  www.sonsofathanasius.com',
     pageLabel: (current, total) => `ገጽ ${current} / ${total}`,
   },
   ti: {
     headerTitle: 'ደቂቀ አትናቴዎስ  |  SONS OF ATHANASIUS',
-    headerSubtitle: 'www.sonsofathanasius.com  •  ናይ ኢትዮጵያ ኦርቶዶክስ ተዋሕዶ ቤተ ክርስቲያን ናይ ዕቅበተ እምነት ዲጂታል ቤተ መጻሕፍቲ',
-    authorLabel: 'ደራሲ',
-    categoryLabel: 'ምድብ',
+    headerSubtitle: 'www.sonsofathanasius.com  •  ክርስቲያናዊ ናይ ዕቅበተ እምነት ማሕበር',
+    authorLabel: 'ጸሓፊ',
     dateLabel: 'ዕለት',
-    defaultAuthor: 'ደቂቀ አትናቴዎስ',
-    footerQuote: '«ቃል እግዚኣብሔር ንዘለኣለም ይነብር።»  •  ደቂቀ አትናቴዎስ  •  www.sonsofathanasius.com',
+    defaultAuthor: 'ዘአትናቴዎስ',
+    footerQuote: '«ኢየሱስ ክርስቶስ ትማልን ሎምን ንዘለኣለምን ንሱ እዩ» (ዕብራውያን ፲፫:፰)  •  ደቂቀ አትናቴዎስ  •  www.sonsofathanasius.com',
     pageLabel: (current, total) => `ገጽ ${current} / ${total}`,
   },
   en: {
     headerTitle: 'SONS OF ATHANASIUS',
-    headerSubtitle: 'www.sonsofathanasius.com  •  Orthodox Christian Apologetics Digital Library',
+    headerSubtitle: 'www.sonsofathanasius.com  •  Christian Apologetics',
     authorLabel: 'Author',
-    categoryLabel: 'Category',
     dateLabel: 'Date',
-    defaultAuthor: 'Sons of Athanasius',
-    footerQuote: '“The Word of the Lord endures forever.”  •  Sons of Athanasius  •  www.sonsofathanasius.com',
+    defaultAuthor: 'Ze-Athanasius',
+    footerQuote: '“Jesus Christ is the same yesterday and today and forever.” (Hebrews 13:8)  •  Sons of Athanasius  •  www.sonsofathanasius.com',
     pageLabel: (current, total) => `Page ${current} of ${total}`,
   },
   om: {
     headerTitle: 'ILMAAN ATNAATEWOOS  |  SONS OF ATHANASIUS',
-    headerSubtitle: 'www.sonsofathanasius.com  •  Kuusaa Barreeffamoota Amantii Ortodoksii Tawaahidoo Itoophiyaa',
+    headerSubtitle: 'www.sonsofathanasius.com  •  Waldaa Ittisa Amantii Kiristaanaa',
     authorLabel: 'Barreessaa',
-    categoryLabel: 'Kutaa',
     dateLabel: 'Guyyaa',
-    defaultAuthor: 'Ilmaan Atnaatewoos',
-    footerQuote: '«Dubbiin Waaqayyoo bara baraan jiraata.»  •  Ilmaan Atnaatewoos  •  www.sonsofathanasius.com',
+    defaultAuthor: 'Ze-Atnaatewoos',
+    footerQuote: '«Yesuus Kiristoos kaleessas, har\'as, bara baraanis akkuma jirutti jiraata.» (Ibroota 13:8)  •  Ilmaan Atnaatewoos  •  www.sonsofathanasius.com',
     pageLabel: (current, total) => `Fuula ${current} / ${total}`,
   },
 };
@@ -208,18 +204,17 @@ export function generateArticlePdf(data: ArticlePdfData): Promise<Buffer> {
         isEthiopic,
         labels.defaultAuthor
       );
-      const safeCategory = sanitizeForFont(normalizeNfc(data.categoryName), isEthiopic, 'Theology');
 
       const doc = new PDFDocument({
         size: 'A4',
-        margin: 50,
+        margins: { top: 44, bottom: 44, left: 48, right: 48 },
         bufferPages: true,
         info: {
           Title: safeTitle,
           Author: safeAuthor,
-          Subject: safeCategory,
+          Subject: 'Orthodox Christian Apologetics',
           Keywords: 'Orthodox, Apologetics, EOTC, Theology, Patristics',
-          Creator: 'ደቂቀ አትናቴዎስ (Sons of Athanasius) Digital Library',
+          Creator: 'ደቂቀ አትናቴዎስ (Sons of Athanasius)',
         },
       });
 
@@ -247,91 +242,124 @@ export function generateArticlePdf(data: ArticlePdfData): Promise<Buffer> {
       doc.registerFont('AppBold', fontBoldPath);
       doc.registerFont('AppHeading', fontHeadingPath);
 
-      // Colors
-      const primaryCrimson = '#7A0C0C';
-      const secondaryGold = '#D4AF37';
-      const darkText = '#1A1A1A';
-      const mutedText = '#666666';
+      // Color Palette
+      const crimson = '#7A0C0C';
+      const crimsonDark = '#5C0808';
+      const gold = '#A37A17';
+      const textDark = '#1C1917';
+      const textMuted = '#78716C';
+      const borderLight = '#E7E5E4';
 
-      // ── Header ──────────────────────────────────────────
+      const contentWidth = 499.28;
+      const leftMargin = 48;
+      const rightMargin = 547.28;
+
+      // ── 1. Top Header Masthead ───────────────────────────
+      const headerTopY = 36;
+
       doc
-        .font('AppHeading')
-        .fontSize(10)
-        .fillColor(primaryCrimson)
-        .text(labels.headerTitle, 50, 45, { align: 'center', characterSpacing: 1 });
+        .font('AppBold')
+        .fontSize(8.5)
+        .fillColor(crimson)
+        .text('ደቂቀ አትናቴዎስ', leftMargin, headerTopY, { continued: true })
+        .font('AppRegular')
+        .fontSize(8)
+        .fillColor(textMuted)
+        .text('  |  SONS OF ATHANASIUS', { continued: true })
+        .fillColor(gold)
+        .text(`  •  ${labels.headerSubtitle.replace(/^www\.sonsofathanasius\.com\s*•\s*/, '')}`, { align: 'left' });
 
       doc
         .font('AppRegular')
-        .fontSize(8)
-        .fillColor(mutedText)
-        .text(labels.headerSubtitle, {
-          align: 'center',
-        });
+        .fontSize(7.5)
+        .fillColor(textMuted)
+        .text('www.sonsofathanasius.com', leftMargin, headerTopY, { align: 'right' });
 
-      doc.moveDown(0.5);
+      // Top Rule (Hairline Gold with Crimson left bar)
+      const ruleY = headerTopY + 15;
+      doc.rect(leftMargin, ruleY, contentWidth, 0.75).fill(borderLight);
+      doc.rect(leftMargin, ruleY, 50, 1.5).fill(crimson);
+      doc.rect(leftMargin + 50, ruleY, 30, 1.5).fill(gold);
 
-      // Decorative Crimson & Gold Header Bar
-      const startX = 50;
-      const lineWidth = 495;
-      const currentY = doc.y;
+      doc.y = ruleY + 18;
 
-      doc.rect(startX, currentY, lineWidth, 2).fill(primaryCrimson);
-      doc.rect(startX + 180, currentY, 135, 2).fill(secondaryGold);
-      doc.moveDown(1.2);
-
-      // ── Title ───────────────────────────────────────────
+      // ── 2. Article Main Title ────────────────────────────
       doc
         .font('AppHeading')
-        .fontSize(19)
-        .fillColor(primaryCrimson)
-        .text(safeTitle, { align: 'left', lineGap: 4 });
+        .fontSize(19.5)
+        .fillColor(crimsonDark)
+        .text(safeTitle, leftMargin, doc.y, {
+          width: contentWidth,
+          lineGap: 4,
+        });
 
-      doc.moveDown(0.6);
+      doc.moveDown(0.4);
 
-      // ── Metadata Byline ─────────────────────────────────
-      const pubDate = data.publishedAt
-        ? new Date(data.publishedAt).toLocaleDateString(isEthiopic ? 'am-ET' : 'en-US', {
-            year: 'numeric',
-            month: 'long',
-            day: 'numeric',
-          })
-        : new Date().toLocaleDateString('en-US');
+      // ── 3. Classical Metadata Row ────────────────────────
+      const metaY = doc.y;
+
+      const rawDate = data.publishedAt ? new Date(data.publishedAt) : new Date();
+      const day = String(rawDate.getDate()).padStart(2, '0');
+      const month = String(rawDate.getMonth() + 1).padStart(2, '0');
+      const year = rawDate.getFullYear();
+      const pubDate = `${day}/${month}/${year}`;
 
       doc
         .font('AppBold')
         .fontSize(9)
-        .fillColor(mutedText)
-        .text(`${labels.authorLabel}: ${safeAuthor}   •   ${labels.categoryLabel}: ${safeCategory}   •   ${labels.dateLabel}: ${pubDate}`);
+        .fillColor(crimson)
+        .text(`${labels.authorLabel}፡ `, leftMargin, metaY, { continued: true })
+        .font('AppBold')
+        .fontSize(9)
+        .fillColor(textDark)
+        .text(safeAuthor);
 
-      doc.moveDown(0.8);
+      doc
+        .font('AppRegular')
+        .fontSize(8.5)
+        .fillColor(textMuted)
+        .text(`${labels.dateLabel}፡ ${pubDate}`, leftMargin, metaY, {
+          align: 'right',
+          width: contentWidth,
+        });
 
-      // Thin divider
-      doc.strokeColor('#E5E5E5').lineWidth(0.5).moveTo(50, doc.y).lineTo(545, doc.y).stroke();
-      doc.moveDown(0.8);
+      const metaDividerY = metaY + 18;
+      doc.rect(leftMargin, metaDividerY, contentWidth, 0.5).fill('#EDEBE8');
 
-      // ── Summary Callout Box (if present) ────────────────
+      doc.y = metaDividerY + 14;
+
+      // ── 4. Abstract / Summary Box ────────────────────────
       if (data.summary && data.summary.trim()) {
-        const summaryY = doc.y;
         const summaryText = sanitizeForFont(normalizeNfc(data.summary.trim()), isEthiopic);
-
-        doc
-          .rect(50, summaryY, 495, 45)
-          .fillAndStroke('#FAF8F5', '#EADFC7');
+        const summaryStartY = doc.y;
 
         doc
           .font('AppRegular')
           .fontSize(9.5)
-          .fillColor('#4A3E2D')
-          .text(summaryText, 62, summaryY + 8, {
-            width: 471,
-            lineGap: 3,
-          });
+          .fillColor('#3A332C');
 
-        doc.y = summaryY + 55;
-        doc.moveDown(0.5);
+        const summaryHeight = doc.heightOfString(summaryText, {
+          width: contentWidth - 28,
+          lineGap: 3.5,
+        }) + 14;
+
+        doc
+          .rect(leftMargin, summaryStartY, contentWidth, summaryHeight)
+          .fillAndStroke('#FAF8F5', '#EADFC7');
+
+        doc
+          .rect(leftMargin, summaryStartY, 3, summaryHeight)
+          .fill(gold);
+
+        doc.text(summaryText, leftMargin + 14, summaryStartY + 7, {
+          width: contentWidth - 28,
+          lineGap: 3.5,
+        });
+
+        doc.y = summaryStartY + summaryHeight + 14;
       }
 
-      // ── Body Blocks ─────────────────────────────────────
+      // ── 5. Body Blocks ───────────────────────────────────
       const blocks = parseHtmlToBlocks(data.body);
 
       for (const block of blocks) {
@@ -340,39 +368,56 @@ export function generateArticlePdf(data: ArticlePdfData): Promise<Buffer> {
         }
 
         if (block.type === 'heading') {
-          doc.moveDown(0.6);
-          const headingSize = block.level <= 2 ? 14 : 12;
+          doc.moveDown(0.5);
+          const headingSize = block.level <= 2 ? 12.5 : 11.5;
           doc
             .font('AppHeading')
             .fontSize(headingSize)
-            .fillColor(primaryCrimson)
-            .text(normalizeNfc(block.text), { lineGap: 3 });
-          doc.moveDown(0.3);
-        } else if (block.type === 'quote') {
-          doc.moveDown(0.4);
-          const quoteY = doc.y;
-          doc.rect(50, quoteY, 3, 25).fill(secondaryGold);
-          doc
-            .font('AppRegular')
-            .fontSize(10)
-            .fillColor('#333333')
-            .text(normalizeNfc(block.text), 60, quoteY + 2, {
-              width: 480,
+            .fillColor(crimson)
+            .text(normalizeNfc(block.text), leftMargin, doc.y, {
+              width: contentWidth,
               lineGap: 3,
             });
-          doc.moveDown(0.5);
+          doc.moveDown(0.35);
+        } else if (block.type === 'quote') {
+          doc.moveDown(0.4);
+          const quoteText = normalizeNfc(block.text);
+          const quoteStartY = doc.y;
+          const quoteContentHeight = doc.heightOfString(quoteText, {
+            width: contentWidth - 32,
+            lineGap: 3.5,
+          }) + 16;
+
+          doc
+            .rect(leftMargin, quoteStartY, contentWidth, quoteContentHeight)
+            .fill('#F9F7F2');
+
+          doc
+            .rect(leftMargin, quoteStartY, 3, quoteContentHeight)
+            .fill(crimson);
+
+          doc
+            .font('AppRegular')
+            .fontSize(9.5)
+            .fillColor('#2C241D')
+            .text(quoteText, leftMargin + 16, quoteStartY + 8, {
+              width: contentWidth - 32,
+              lineGap: 3.5,
+            });
+
+          doc.y = quoteStartY + quoteContentHeight + 10;
         } else if (block.type === 'list-item') {
           const prefix = block.ordered ? `${block.index}. ` : '• ';
           doc
             .font('AppBold')
-            .fontSize(10)
-            .fillColor(primaryCrimson)
-            .text(prefix, 60, doc.y, { continued: true });
+            .fontSize(9.5)
+            .fillColor(crimson)
+            .text(prefix, leftMargin + 10, doc.y, { continued: true });
 
           doc
             .font('AppRegular')
-            .fontSize(10)
-            .fillColor(darkText)
+            .fontSize(9.5)
+            .fillColor(textDark)
             .text(normalizeNfc(block.text), {
               lineGap: 3,
               paragraphGap: 4,
@@ -380,59 +425,78 @@ export function generateArticlePdf(data: ArticlePdfData): Promise<Buffer> {
         } else if (block.type === 'pre') {
           doc.moveDown(0.3);
           const preY = doc.y;
-          doc.rect(50, preY, 495, 30).fill('#F4F4F4');
+          doc.rect(leftMargin, preY, contentWidth, 30).fill('#F4F4F4');
           doc
             .font('AppRegular')
             .fontSize(9)
             .fillColor('#222222')
-            .text(normalizeNfc(block.text), 58, preY + 6, { width: 480 });
+            .text(normalizeNfc(block.text), leftMargin + 8, preY + 6, { width: contentWidth - 16 });
           doc.y = preY + 36;
           doc.moveDown(0.4);
         } else {
           doc
             .font('AppRegular')
-            .fontSize(10.5)
-            .fillColor(darkText)
-            .text(normalizeNfc(block.text), {
+            .fontSize(10)
+            .fillColor(textDark)
+            .text(normalizeNfc(block.text), leftMargin, doc.y, {
+              width: contentWidth,
               align: 'justify',
-              lineGap: 4,
+              lineGap: 4.5,
               paragraphGap: 6,
             });
         }
       }
 
-      // ── Header & Footer for All Pages ───────────────────
+      // ── 6. Running Header (Pages 2+) & Footer (All Pages) ───
       const range = doc.bufferedPageRange();
       for (let i = range.start; i < range.start + range.count; i++) {
         doc.switchToPage(i);
 
-        // Temporarily disable bottom margin to prevent auto-page break
         const oldBottomMargin = doc.page.margins.bottom;
         doc.page.margins.bottom = 0;
 
-        // Footer rule
-        doc.strokeColor('#D4AF37').lineWidth(0.5).moveTo(50, 785).lineTo(545, 785).stroke();
+        // Running header for subsequent pages (2+)
+        if (i > 0) {
+          const runY = 32;
+          doc
+            .font('AppRegular')
+            .fontSize(7.5)
+            .fillColor(textMuted)
+            .text(labels.headerTitle, leftMargin, runY, { continued: true })
+            .text(`  •  ${safeTitle.length > 50 ? safeTitle.slice(0, 50) + '…' : safeTitle}`, {
+              align: 'left',
+              width: contentWidth - 40,
+            });
 
-        // Footer text
+          doc.rect(leftMargin, runY + 12, contentWidth, 0.5).fill(borderLight);
+        }
+
+        // Footer divider & accents
+        const footerY = 788;
+        doc.rect(leftMargin, footerY, contentWidth, 0.75).fill(borderLight);
+        doc.rect(leftMargin, footerY, 40, 1.5).fill(gold);
+        doc.rect(rightMargin - 40, footerY, 40, 1.5).fill(crimson);
+
+        // Footer scripture quote
         doc
           .font('AppRegular')
-          .fontSize(8)
-          .fillColor(mutedText)
+          .fontSize(7.5)
+          .fillColor(textMuted)
           .text(
             labels.footerQuote,
-            50,
-            793,
-            { align: 'left', width: 390, lineBreak: false }
+            leftMargin,
+            footerY + 7,
+            { width: contentWidth - 65, lineBreak: false }
           );
 
         // Page Number
         doc
-          .font('AppRegular')
+          .font('AppBold')
           .fontSize(8)
-          .fillColor(mutedText)
-          .text(labels.pageLabel(i + 1, range.count), 450, 793, {
+          .fillColor(crimson)
+          .text(labels.pageLabel(i + 1, range.count), rightMargin - 60, footerY + 7, {
             align: 'right',
-            width: 95,
+            width: 60,
             lineBreak: false,
           });
 
@@ -721,17 +785,13 @@ export async function getOrGenerateArticlePdf(
     }
 
     if (rows.length === 0) {
-      const notFoundErr = new Error('Article not found or not published');
-      (notFoundErr as unknown as { statusCode: number }).statusCode = 404;
-      throw notFoundErr;
+      throw new NotFoundError('Article not found or not published');
     }
 
     const article = rows[0];
 
     if (!article.pdfEnabled) {
-      const disabledErr = new Error('PDF export is disabled for this article');
-      (disabledErr as unknown as { statusCode: number }).statusCode = 404;
-      throw disabledErr;
+      throw new NotFoundError('PDF export is disabled for this article');
     }
 
     // 2. Check if static PDF exists on disk according to DB recorded path

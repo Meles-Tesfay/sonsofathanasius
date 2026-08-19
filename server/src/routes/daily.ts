@@ -1,21 +1,42 @@
 import { Router } from 'express';
-import { validateQuery } from '../validators/queryValidator.js';
-import { DailyQuerySchema } from '../validators/publicQueryValidator.js';
+import { getDailyReading } from '../controllers/dailyController.js';
 import { cachedRoute } from '../middleware/cacheMiddleware.js';
 import { CACHE_TTL } from '../cache/index.js';
-import { getDailyLectionary } from '../controllers/dailyController.js';
+import { dailyLimiter } from '../middleware/rateLimiter.js';
 
 const router = Router();
 
 /**
- * Daily Lectionary & Saints Endpoint
- * GET /api/v1/daily?lang={am|en|om|ti}
- * Cache: 24 hours fresh, 1 hour stale window
+ * @openapi
+ * /api/v1/daily:
+ *   get:
+ *     summary: Daily Orthodox lectionary & patristic reading
+ *     description: Retrieve daily saint commemoration, scripture verse, and patristic quote with automatic calendar date rollover.
+ *     tags:
+ *       - Spiritual
+ *     parameters:
+ *       - in: query
+ *         name: lang
+ *         schema:
+ *           type: string
+ *           default: am
+ *     responses:
+ *       200:
+ *         description: Daily reading content
+ *         headers:
+ *           X-Cache:
+ *             schema:
+ *               type: string
+ *               enum: [HIT, MISS, COALESCED, STALE]
  */
 router.get(
   '/',
-  validateQuery(DailyQuerySchema),
-  cachedRoute('daily', CACHE_TTL.DAILY, CACHE_TTL.DAILY_STALE)(getDailyLectionary)
+  dailyLimiter,
+  cachedRoute(
+    (_req) => `daily:${new Date().toISOString().split('T')[0]}`,
+    CACHE_TTL.DAILY,
+    CACHE_TTL.DAILY_STALE
+  )(getDailyReading)
 );
 
 export default router;
