@@ -75,7 +75,7 @@ if (process.env.NODE_ENV !== 'test') {
 // Graceful Shutdown
 process.on('SIGTERM', () => {
   console.log('SIGTERM received. Shutting down gracefully...');
-  server.close(() => {
+  server?.close(() => {
     console.log('Process terminated.');
   });
 });
