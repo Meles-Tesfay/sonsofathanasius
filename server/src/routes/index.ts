@@ -21,6 +21,10 @@ router.use('/admin', uploadRouter);
 // 4. Articles & PDF Routes
 router.use('/articles', pdfRouter);
 
+// 5. Contact Form Route
+import contactRouter from './contact.js';
+router.use('/contact', contactRouter);
+
 /**
  * Health Check & API Status Endpoint
  * GET /api/v1/health
