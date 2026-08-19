@@ -1,7 +1,9 @@
 import { Request, Response } from 'express';
 import { db } from '../db/index.js';
 import { tags, contentTags, content } from '../db/schema.js';
-import { eq, count, asc, desc } from 'drizzle-orm';
+import { eq, count, asc } from 'drizzle-orm';
+import { ValidatedRequest } from '../validators/queryValidator.js';
+import { TagQueryParams } from '../validators/publicQueryValidator.js';
 
 export interface TagWithCount {
   id: number;
@@ -14,30 +16,30 @@ export interface TagWithCount {
  * List all available tags with active article counts
  * GET /api/v1/tags
  */
-export async function getTags(_req: Request, _res: Response) {
-  // 1. Query all tags
-  const allTags = await db
-    .select()
-    .from(tags)
-    .orderBy(asc(tags.name));
+export async function getTags(req: Request, _res: Response) {
+  const query = (req as ValidatedRequest<TagQueryParams>).validatedQuery || { lang: 'am' };
+  const lang = query.lang || 'am';
 
-  // 2. Query article count per tag for published articles
-  const tagArticleCounts = await db
-    .select({
-      tagId: contentTags.tagId,
-      count: count(contentTags.contentId),
-    })
-    .from(contentTags)
-    .innerJoin(content, eq(contentTags.contentId, content.id))
-    .where(eq(content.status, 'published'))
-    .groupBy(contentTags.tagId);
+  // Fetch all tags and published article counts per tag in parallel
+  const [allTags, tagArticleCounts] = await Promise.all([
+    db.select().from(tags).orderBy(asc(tags.name)),
+    db
+      .select({
+        tagId: contentTags.tagId,
+        count: count(contentTags.contentId),
+      })
+      .from(contentTags)
+      .innerJoin(content, eq(contentTags.contentId, content.id))
+      .where(eq(content.status, 'published'))
+      .groupBy(contentTags.tagId),
+  ]);
 
   const countMap = new Map<number, number>();
   for (const item of tagArticleCounts) {
     countMap.set(item.tagId, Number(item.count));
   }
 
-  // 3. Format response and sort by articleCount DESC, then name ASC
+  // Format response and sort by articleCount DESC, then name ASC
   const result: TagWithCount[] = allTags.map((tag) => ({
     id: tag.id,
     slug: tag.slug,
@@ -57,6 +59,7 @@ export async function getTags(_req: Request, _res: Response) {
     data: result,
     meta: {
       timestamp: new Date().toISOString(),
+      lang,
       total: result.length,
     },
   };

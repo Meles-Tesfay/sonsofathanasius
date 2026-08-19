@@ -1,24 +1,37 @@
 # ==============================================================================
-# Sons of Athanasius — Upload Directory Security & Static Caching Policy
+# Sons of Athanasius — Uploads Directory Hardening & Static Caching Rules
 # ==============================================================================
 
-# 1. Strictly deny execution of server-side scripts (Immunity against Web Shells)
-<FilesMatch "\.(php|phtml|php3|php4|php5|php7|phps|pl|py|jsp|asp|htm|html|shtml|sh|cgi|bash|exe|bin)$">
+# 1. Disable Directory Listing and CGI Execution
+Options -Indexes -ExecCGI
+
+# 2. Strictly Deny Execution of Server-Side Scripts (Immunity against Web Shells)
+<FilesMatch "\.(php|phtml|php3|php4|php5|php7|php8|phps|pl|py|jsp|asp|htm|html|shtml|sh|cgi|bash|exe|bin)$">
     Require all denied
 </FilesMatch>
 
-# 2. Disable directory browsing
-Options -Indexes
-
-# 3. Enable CORS headers for static fonts and assets
-<IfModule mod_headers.c>
-    Header set Access-Control-Allow-Origin "*"
+RemoveHandler .php .phtml .php3 .php4 .php5 .php7 .php8 .phps .cgi .pl .py .sh
+<IfModule mod_php.c>
+    php_flag engine off
+</IfModule>
+<IfModule mod_php7.c>
+    php_flag engine off
+</IfModule>
+<IfModule mod_php8.c>
+    php_flag engine off
 </IfModule>
 
-# 4. Long-term browser caching for immutable assets
+# 3. Enable CORS Headers for Static Fonts and Assets
+<IfModule mod_headers.c>
+    Header set Access-Control-Allow-Origin "*"
+    Header set X-Content-Type-Options "nosniff"
+</IfModule>
+
+# 4. Long-Term Browser Caching for Immutable Uploads
 <IfModule mod_expires.c>
     ExpiresActive On
     ExpiresByType image/webp "access plus 1 year"
     ExpiresByType image/jpeg "access plus 1 year"
+    ExpiresByType image/png "access plus 1 year"
     ExpiresByType application/pdf "access plus 30 days"
 </IfModule>

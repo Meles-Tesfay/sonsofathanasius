@@ -2,16 +2,19 @@ import { Request, Response, NextFunction } from 'express';
 import fs from 'fs';
 import { getOrGenerateArticlePdf } from '../services/pdfService.js';
 import { BadRequestError } from '../middleware/errorHandler.js';
+import { ValidatedRequest } from '../validators/queryValidator.js';
+import { PdfQueryParams, ArticleSlugParams } from '../validators/publicQueryValidator.js';
 
 /**
  * Stream or generate static article PDF
  * GET /api/v1/articles/:slug/pdf?lang={am|en|om|ti}
  */
 export async function downloadArticlePdfController(req: Request, res: Response, next: NextFunction) {
-  const rawSlug = req.params.slug;
-  const slug = (Array.isArray(rawSlug) ? rawSlug[0] : rawSlug)?.trim();
-  const rawLang = req.query.lang;
-  const lang = ((Array.isArray(rawLang) ? rawLang[0] : rawLang) || 'am').toString();
+  const params = (req as ValidatedRequest<any, ArticleSlugParams>).validatedParams || req.params;
+  const query = (req as ValidatedRequest<PdfQueryParams>).validatedQuery || { lang: 'am' };
+
+  const slug = String(params.slug || req.params.slug || '').trim();
+  const lang = query.lang || 'am';
 
   if (!slug) {
     throw new BadRequestError('Article slug is required');

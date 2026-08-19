@@ -1,181 +1,149 @@
 import { Request, Response } from 'express';
-import crypto from 'crypto';
-import bcrypt from 'bcrypt';
+import { z } from 'zod';
 import { db } from '../db/index.js';
 import { admins, adminSessions } from '../db/schema.js';
-import { eq, or, sql } from 'drizzle-orm';
-import { config } from '../config/index.js';
-import { LoginSchema } from '../validators/authValidator.js';
+import { eq, or } from 'drizzle-orm';
+import { sendSuccess } from '../utils/response.js';
+import { UnauthorizedError, BadRequestError } from '../middleware/errorHandler.js';
+import { verifyPassword, generateSessionToken } from '../utils/crypto.js';
 import {
-  setSessionCookie,
-  clearSessionCookie,
-  invalidateSessionCache,
-  clearEntireSessionCache,
+  ADMIN_COOKIE_NAME,
+  getAdminCookieOptions,
+  cacheSession,
+  evictSessionCache,
+  evictAdminSessionsCache,
+  AuthenticatedAdmin,
 } from '../middleware/auth.js';
-import { sendSuccess, sendError } from '../utils/response.js';
 
-// ══════════════════════════════════════════════════════════════════
-// 1. LOGIN — POST /api/v1/admin/auth/login
-// ══════════════════════════════════════════════════════════════════
+export const LoginSchema = z.object({
+  identifier: z.string().min(3, 'Username or email is required').trim(),
+  password: z.string().min(6, 'Password must be at least 6 characters'),
+});
 
-export async function login(req: Request, res: Response): Promise<void> {
-  // 1. Validate request body
-  const parsed = LoginSchema.safeParse(req.body);
-  if (!parsed.success) {
-    const details = parsed.error.errors
-      .map((e) => `${e.path.join('.')}: ${e.message}`)
-      .join(', ');
-    sendError(res, `Invalid login payload: ${details}`, 400);
-    return;
+export type LoginInput = z.infer<typeof LoginSchema>;
+
+// Pre-computed static dummy scrypt hash to equalize response times and prevent user enumeration
+const DUMMY_SCRYPT_HASH =
+  'scrypt:a1b2c3d4e5f60718293a4b5c6d7e8f90:7b682e05b9588b56f8f553a1a1f0a1c6a2879a95267b14d284a123689403a55255470d046f483c66f564dc17578278772a083d060f640989ad911636c7473fa5';
+
+/**
+ * POST /api/v1/admin/auth/login
+ * Authenticates admin credentials, persists session in MariaDB, and sets host-only cookie.
+ */
+export async function loginController(req: Request, res: Response): Promise<void> {
+  const parseResult = LoginSchema.safeParse(req.body);
+  if (!parseResult.success) {
+    const errorMsg = parseResult.error.errors.map((e) => e.message).join(', ');
+    throw new BadRequestError(errorMsg || 'Invalid credentials payload');
   }
 
-  const { login: loginInput, password } = parsed.data;
+  const { identifier, password } = parseResult.data;
 
-  // 2. Look up admin by username OR email (case-insensitive)
-  const normalizedLogin = loginInput.trim().toLowerCase();
-  const rows = await db
-    .select({
-      id: admins.id,
-      username: admins.username,
-      email: admins.email,
-      passwordHash: admins.passwordHash,
-      fullName: admins.fullName,
-      role: admins.role,
-      isActive: admins.isActive,
-    })
+  // Extract client metadata for audit logging (req.ip is trustworthy: trust proxy = 'loopback')
+  const ipAddress = req.ip || req.socket.remoteAddress || null;
+  const userAgent = typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null;
+
+  // 1. Query admin record by username OR email
+  const adminRows = await db
+    .select()
     .from(admins)
-    .where(
-      or(
-        eq(sql`LOWER(${admins.username})`, normalizedLogin),
-        eq(sql`LOWER(${admins.email})`, normalizedLogin)
-      )
-    )
+    .where(or(eq(admins.username, identifier), eq(admins.email, identifier)))
     .limit(1);
 
-  if (rows.length === 0) {
-    sendError(res, 'Invalid credentials', 401);
-    return;
+  if (adminRows.length === 0) {
+    // Equalize computational timing to prevent username/email enumeration
+    await verifyPassword(password, DUMMY_SCRYPT_HASH);
+    throw new UnauthorizedError('Invalid username/email or password');
   }
 
-  const admin = rows[0];
+  const admin = adminRows[0];
 
-  // 3. Verify account is active
+  // 2. Check if account is active (use identical generic error to prevent account-existence leakage)
   if (!admin.isActive) {
-    sendError(res, 'Account is disabled. Contact a superadmin.', 403);
-    return;
+    await verifyPassword(password, admin.passwordHash);
+    console.warn(`⚠️ [Auth] Login attempt on deactivated account "${identifier}" from IP: ${ipAddress}`);
+    throw new UnauthorizedError('Invalid username/email or password');
   }
 
-  // 4. Verify password with bcrypt
-  const passwordValid = await bcrypt.compare(password, admin.passwordHash);
-  if (!passwordValid) {
-    sendError(res, 'Invalid credentials', 401);
-    return;
+  // 3. Constant-time password hash verification
+  const isValidPassword = await verifyPassword(password, admin.passwordHash);
+  if (!isValidPassword) {
+    throw new UnauthorizedError('Invalid username/email or password');
   }
 
-  // 5. Generate cryptographically secure session token
-  const sessionToken = crypto.randomBytes(64).toString('hex'); // 128 hex chars
+  // 4. Generate cryptographically secure session token & 7-day expiry
+  const token = generateSessionToken();
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
-  // 6. Insert session into admin_sessions
-  const expiresAt = new Date(Date.now() + config.session.maxAgeMs);
+  // 5. Persist session to database
   await db.insert(adminSessions).values({
-    id: sessionToken,
+    id: token,
     adminId: admin.id,
-    ipAddress: (req.ip || req.socket.remoteAddress || 'unknown').slice(0, 45),
-    userAgent: (req.headers['user-agent'] || 'unknown').slice(0, 500),
+    ipAddress: ipAddress ? ipAddress.slice(0, 45) : null,
+    userAgent,
     expiresAt,
   });
 
-  // 7. Set host-only httpOnly session cookie
-  setSessionCookie(res, sessionToken);
-
-  // 8. Return admin profile (never expose passwordHash)
-  sendSuccess(res, {
+  const adminProfile: AuthenticatedAdmin = {
     id: admin.id,
     username: admin.username,
     email: admin.email,
     fullName: admin.fullName,
-    role: admin.role,
-  });
+    role: admin.role as AuthenticatedAdmin['role'],
+  };
+
+  // 6. Cache in memory and set secure host-only cookie
+  cacheSession(token, adminProfile, expiresAt);
+  res.cookie(ADMIN_COOKIE_NAME, token, getAdminCookieOptions(req));
+
+  sendSuccess(res, { admin: adminProfile });
 }
 
-// ══════════════════════════════════════════════════════════════════
-// 2. LOGOUT — POST /api/v1/admin/auth/logout
-// ══════════════════════════════════════════════════════════════════
+/**
+ * POST /api/v1/admin/auth/logout
+ * Terminates the current admin session, evicts from cache, and clears the cookie.
+ */
+export async function logoutController(req: Request, res: Response): Promise<void> {
+  const token =
+    req.sessionId ||
+    req.cookies?.[ADMIN_COOKIE_NAME] ||
+    req.headers.authorization?.replace(/^Bearer\s+/i, '');
 
-export async function logout(req: Request, res: Response): Promise<void> {
-  const token: string | undefined = req.cookies?.[config.session.cookieName];
-
-  if (token) {
-    // 1. Delete session from DB
-    await db.delete(adminSessions).where(eq(adminSessions.id, token));
-
-    // 2. Evict from LRU cache
-    invalidateSessionCache(token);
+  if (token && typeof token === 'string') {
+    evictSessionCache(token);
+    await db.delete(adminSessions).where(eq(adminSessions.id, token)).catch(() => {});
   }
 
-  // 3. Clear browser cookie
-  clearSessionCookie(res);
-
+  res.clearCookie(ADMIN_COOKIE_NAME, { path: '/api/v1/admin' });
   sendSuccess(res, { message: 'Logged out successfully' });
 }
 
-// ══════════════════════════════════════════════════════════════════
-// 3. ME — GET /api/v1/admin/auth/me
-// ══════════════════════════════════════════════════════════════════
-
-export async function me(req: Request, res: Response): Promise<void> {
+/**
+ * GET /api/v1/admin/auth/me
+ * Retrieves current authenticated admin profile and role.
+ */
+export async function getMeController(req: Request, res: Response): Promise<void> {
   if (!req.admin) {
-    sendError(res, 'Not authenticated', 401);
-    return;
+    throw new UnauthorizedError('Not authenticated');
   }
 
-  // Fetch full profile from DB (req.admin is the cached minimal version)
-  const rows = await db
-    .select({
-      id: admins.id,
-      username: admins.username,
-      email: admins.email,
-      fullName: admins.fullName,
-      role: admins.role,
-      createdAt: admins.createdAt,
-      updatedAt: admins.updatedAt,
-    })
-    .from(admins)
-    .where(eq(admins.id, req.admin.id))
-    .limit(1);
-
-  if (rows.length === 0) {
-    sendError(res, 'Admin not found', 404);
-    return;
-  }
-
-  sendSuccess(res, rows[0]);
+  sendSuccess(res, { admin: req.admin });
 }
 
-// ══════════════════════════════════════════════════════════════════
-// 4. LOGOUT ALL — POST /api/v1/admin/auth/logout-all
-//    Remote revocation: deletes ALL active sessions for this admin.
-// ══════════════════════════════════════════════════════════════════
-
-export async function logoutAll(req: Request, res: Response): Promise<void> {
+/**
+ * POST /api/v1/admin/auth/logout-all
+ * Remote session revocation: Deletes all active sessions for the current admin across all devices.
+ */
+export async function logoutAllController(req: Request, res: Response): Promise<void> {
   if (!req.admin) {
-    sendError(res, 'Not authenticated', 401);
-    return;
+    throw new UnauthorizedError('Not authenticated');
   }
 
-  // 1. Delete all sessions for this admin from DB
-  const result = await db
-    .delete(adminSessions)
-    .where(eq(adminSessions.adminId, req.admin.id));
+  const adminId = req.admin.id;
+  evictAdminSessionsCache(adminId);
 
-  // 2. Clear entire session LRU cache (can't selectively evict by adminId)
-  clearEntireSessionCache();
+  await db.delete(adminSessions).where(eq(adminSessions.adminId, adminId));
 
-  // 3. Clear browser cookie
-  clearSessionCookie(res);
-
-  sendSuccess(res, {
-    message: 'All sessions revoked successfully',
-    sessionsRevoked: (result as unknown as [{ affectedRows: number }])[0]?.affectedRows ?? 0,
-  });
+  res.clearCookie(ADMIN_COOKIE_NAME, { path: '/api/v1/admin' });
+  sendSuccess(res, { message: 'All sessions terminated successfully' });
 }

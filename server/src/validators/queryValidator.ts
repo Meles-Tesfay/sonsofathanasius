@@ -1,8 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 
-export interface ValidatedRequest<T = unknown> extends Request {
-  validatedQuery?: T;
+export interface ValidatedRequest<TQuery = any, TParams = any> extends Request {
+  validatedQuery?: TQuery;
+  validatedParams?: TParams;
 }
 
 /**
@@ -11,7 +12,7 @@ export interface ValidatedRequest<T = unknown> extends Request {
  * BEFORE hitting the cache layer or database by forwarding ZodError to errorHandler.
  */
 export function validateQuery<T extends z.ZodTypeAny>(schema: T) {
-  return (req: ValidatedRequest<z.infer<T>>, _res: Response, next: NextFunction) => {
+  return (req: ValidatedRequest<z.infer<T>, any>, _res: Response, next: NextFunction) => {
     const result = schema.safeParse(req.query);
 
     if (!result.success) {
@@ -19,6 +20,23 @@ export function validateQuery<T extends z.ZodTypeAny>(schema: T) {
     }
 
     req.validatedQuery = result.data;
+    next();
+  };
+}
+
+/**
+ * Reusable Path Parameters Validator Middleware
+ * Rejects invalid route parameters with 400 Bad Request
+ */
+export function validateParams<T extends z.ZodTypeAny>(schema: T) {
+  return (req: ValidatedRequest<any, z.infer<T>>, _res: Response, next: NextFunction) => {
+    const result = schema.safeParse(req.params);
+
+    if (!result.success) {
+      return next(result.error);
+    }
+
+    req.validatedParams = result.data;
     next();
   };
 }

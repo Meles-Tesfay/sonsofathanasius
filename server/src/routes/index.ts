@@ -4,13 +4,12 @@ import { config } from '../config/index.js';
 import { getCacheMetrics } from '../cache/metrics.js';
 import docsRouter from './docs.js';
 import searchRouter from './search.js';
-import uploadRouter from './upload.js';
-import authRouter from './auth.js';
 import adminRouter from './admin.js';
 import articlesRouter from './articles.js';
 import categoriesRouter from './categories.js';
 import tagsRouter from './tags.js';
 import dailyRouter from './daily.js';
+import authRouter from './auth.js';
 import contactRouter from './contact.js';
 
 const router = Router();
@@ -18,17 +17,6 @@ const router = Router();
 // 1. Interactive OpenAPI Swagger Documentation
 router.use('/', docsRouter);
 
-// 2. Full-Text Search Engine Route
-router.use('/search', searchRouter);
-
-// 3. Admin Storage & Uploads Route
-router.use('/admin', uploadRouter);
-
-// 4. Admin Auth & Content Management Routes (Phase B7)
-router.use('/admin/auth', authRouter);
-router.use('/admin', adminRouter);
-
-// 5. Public REST API Routes (Phase B6)
 // 2. Categories Taxonomy Route
 router.use('/categories', categoriesRouter);
 
@@ -44,8 +32,14 @@ router.use('/daily', dailyRouter);
 // 6. In-Memory Search Engine Route
 router.use('/search', searchRouter);
 
-// 7. Admin Media Upload Route
-router.use('/admin', uploadRouter);
+// 7. Admin Session Authentication Route
+router.use('/admin/auth', authRouter);
+
+// 8. Admin Content Management & Media Upload Routes
+router.use('/admin', adminRouter);
+
+// 9. Contact Form Submission Route (B8)
+router.use('/contact', contactRouter);
 
 /**
  * Health Check & API Status Endpoint
@@ -56,24 +50,30 @@ router.get('/health', (_req: Request, res: Response) => {
     app: 'Sons of Athanasius API',
     version: '2.0.0',
     status: 'healthy',
-    environment: config.nodeEnv,
     timestamp: new Date().toISOString(),
-    documentation: '/api/v1/docs',
-    cache: getCacheMetrics(),
+    ...(config.isProduction
+      ? {}
+      : {
+          environment: config.nodeEnv,
+          documentation: config.enableSwagger ? '/api/v1/docs' : undefined,
+          cache: getCacheMetrics(),
+        }),
   });
 });
 
 /**
- * Cache & Performance Metrics Endpoint
+ * Cache & Performance Metrics Endpoint (Non-production or explicit opt-in only)
  * GET /api/v1/metrics
  */
-router.get('/metrics', (_req: Request, res: Response) => {
-  sendSuccess(res, {
-    cache: getCacheMetrics(),
-    memoryUsage: process.memoryUsage(),
-    uptimeSeconds: Math.floor(process.uptime()),
-    timestamp: new Date().toISOString(),
+if (config.enableMetrics) {
+  router.get('/metrics', (_req: Request, res: Response) => {
+    sendSuccess(res, {
+      cache: getCacheMetrics(),
+      memoryUsage: process.memoryUsage(),
+      uptimeSeconds: Math.floor(process.uptime()),
+      timestamp: new Date().toISOString(),
+    });
   });
-});
+}
 
 export default router;

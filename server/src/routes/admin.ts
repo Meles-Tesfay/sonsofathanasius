@@ -1,31 +1,82 @@
 import { Router } from 'express';
 import { adminLimiter } from '../middleware/rateLimiter.js';
-import { verifyAdminSession } from '../middleware/auth.js';
+import { verifyAdminSession, requireRole } from '../middleware/auth.js';
 import {
-  createArticle,
-  updateArticle,
-  deleteArticle,
-  upsertTranslation,
+  createArticleController,
+  updateArticleController,
+  deleteArticleController,
+  upsertTranslationController,
 } from '../controllers/adminController.js';
+import { uploadCoverController } from '../controllers/uploadController.js';
 
 const router = Router();
 
-/**
- * Admin Content Management Routes — /api/v1/admin
- *
- * All routes require rate limiting + session authentication.
- *
- * POST   /articles                 Create article (atomic transaction)
- * PUT    /articles/:id             Update article metadata & translations
- * DELETE /articles/:id             Cascade delete article + PDF cleanup
- * POST   /articles/:id/translations  UPSERT a single translation
- */
-router.use(adminLimiter);
-router.use(verifyAdminSession);
+// ==========================================
+// 1. ADMIN ARTICLE MUTATIONS
+// ==========================================
 
-router.post('/articles', createArticle);
-router.put('/articles/:id', updateArticle);
-router.delete('/articles/:id', deleteArticle);
-router.post('/articles/:id/translations', upsertTranslation);
+/**
+ * Create new article container, translations, media, and tags atomically
+ * POST /api/v1/admin/articles
+ */
+router.post(
+  '/articles',
+  adminLimiter,
+  verifyAdminSession,
+  requireRole('superadmin', 'editor'),
+  createArticleController
+);
+
+/**
+ * Update existing article container, translations, media, and tags
+ * PUT /api/v1/admin/articles/:id
+ */
+router.put(
+  '/articles/:id',
+  adminLimiter,
+  verifyAdminSession,
+  requireRole('superadmin', 'editor'),
+  updateArticleController
+);
+
+/**
+ * Delete article container and cascade delete translations, media, tags, and static PDFs
+ * DELETE /api/v1/admin/articles/:id (Superadmin only)
+ */
+router.delete(
+  '/articles/:id',
+  adminLimiter,
+  verifyAdminSession,
+  requireRole('superadmin'),
+  deleteArticleController
+);
+
+/**
+ * Add or update translation for an existing article
+ * POST /api/v1/admin/articles/:id/translations
+ */
+router.post(
+  '/articles/:id/translations',
+  adminLimiter,
+  verifyAdminSession,
+  requireRole('superadmin', 'editor', 'translator'),
+  upsertTranslationController
+);
+
+// ==========================================
+// 2. ADMIN MEDIA UPLOADS
+// ==========================================
+
+/**
+ * Upload cover image
+ * POST /api/v1/admin/covers/upload
+ */
+router.post(
+  '/covers/upload',
+  adminLimiter,
+  verifyAdminSession,
+  requireRole('superadmin', 'editor'),
+  uploadCoverController
+);
 
 export default router;

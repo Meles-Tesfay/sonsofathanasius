@@ -1,157 +1,222 @@
 import { Request, Response, NextFunction } from 'express';
 import { LRUCache } from 'lru-cache';
 import { db } from '../db/index.js';
-import { adminSessions, admins } from '../db/schema.js';
-import { eq, and, gt } from 'drizzle-orm';
+import { admins, adminSessions } from '../db/schema.js';
+import { eq, sql } from 'drizzle-orm';
 import { config } from '../config/index.js';
-import { sendError } from '../utils/response.js';
+import { UnauthorizedError, ForbiddenError } from './errorHandler.js';
 
-// ══════════════════════════════════════════════════════════════════
-// Session Verification Middleware (Phase B7.1)
-//
-// Validates the httpOnly session cookie against the admin_sessions
-// DB table, with a 60-second LRU cache buffer to avoid a DB hit on
-// every single admin request.
-// ══════════════════════════════════════════════════════════════════
+export const ADMIN_COOKIE_NAME = 'soa_admin_session';
 
-interface CachedAdminSession {
+export interface AuthenticatedAdmin {
   id: number;
   username: string;
   email: string;
+  fullName: string | null;
   role: 'superadmin' | 'editor' | 'translator';
 }
 
-// 60-second LRU session cache (prevents DB lookup on every request)
-const sessionCache = new LRUCache<string, CachedAdminSession>({
-  max: config.session.sessionCacheMax,
-  ttl: config.session.sessionCacheTtlMs,
+declare global {
+  namespace Express {
+    interface Request {
+      admin?: AuthenticatedAdmin;
+      sessionId?: string;
+    }
+  }
+}
+
+interface CachedSession {
+  admin: AuthenticatedAdmin;
+  expiresAt: number;
+}
+
+// 10-second in-memory session buffer for high performance with bounded revocation propagation
+const sessionCache = new LRUCache<string, CachedSession>({
+  max: 1000,
+  ttl: 10_000,
 });
 
 /**
- * Express middleware: Extracts session cookie, validates against DB
- * (with LRU cache), and attaches req.admin on success.
+ * Sweep expired sessions from the database
  */
-export async function verifyAdminSession(
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> {
-  const token: string | undefined = req.cookies?.[config.session.cookieName];
-
-  if (!token || typeof token !== 'string' || token.length < 32) {
-    sendError(res, 'Authentication required', 401);
-    return;
-  }
-
-  // 1. Check LRU cache first (sub-ms hit)
-  const cached = sessionCache.get(token);
-  if (cached) {
-    req.admin = cached;
-    return next();
-  }
-
-  // 2. Validate against the admin_sessions DB table
+export async function sweepExpiredSessions(): Promise<number> {
   try {
-    const rows = await db
-      .select({
-        adminId: admins.id,
-        username: admins.username,
-        email: admins.email,
-        role: admins.role,
-        isActive: admins.isActive,
-      })
-      .from(adminSessions)
-      .innerJoin(admins, eq(admins.id, adminSessions.adminId))
-      .where(
-        and(
-          eq(adminSessions.id, token),
-          gt(adminSessions.expiresAt, new Date())
-        )
-      )
-      .limit(1);
-
-    if (rows.length === 0) {
-      clearSessionCookie(res);
-      sendError(res, 'Session expired or invalid', 401);
-      return;
-    }
-
-    const row = rows[0];
-
-    // 3. Verify admin account is still active
-    if (!row.isActive) {
-      clearSessionCookie(res);
-      sendError(res, 'Account is disabled', 403);
-      return;
-    }
-
-    // 4. Cache the validated session for 60 seconds
-    const adminData: CachedAdminSession = {
-      id: row.adminId,
-      username: row.username,
-      email: row.email,
-      role: row.role as CachedAdminSession['role'],
-    };
-    sessionCache.set(token, adminData);
-    req.admin = adminData;
-
-    // 5. Update lastActiveAt asynchronously (fire-and-forget)
-    db.update(adminSessions)
-      .set({ lastActiveAt: new Date() })
-      .where(eq(adminSessions.id, token))
-      .catch(() => { /* Non-critical: best-effort activity tracking */ });
-
-    return next();
+    const result = await db.delete(adminSessions).where(sql`${adminSessions.expiresAt} < NOW()`);
+    return (result as any)?.[0]?.affectedRows ?? 0;
   } catch (err) {
-    console.error('❌ [Auth] Session verification failed:', err);
-    sendError(res, 'Internal authentication error', 500);
-    return;
+    console.error('⚠️ [Auth] Failed to sweep expired sessions:', err);
+    return 0;
   }
 }
 
-// ══════════════════════════════════════════════════════════════════
-// Cookie Helpers
-// ══════════════════════════════════════════════════════════════════
+// Periodic cleanup every 24 hours
+const sweepInterval = setInterval(() => {
+  void sweepExpiredSessions();
+}, 24 * 60 * 60 * 1000);
 
-/**
- * Set the admin session cookie with all security flags.
- * Domain attribute is intentionally omitted → host-only cookie.
- */
-export function setSessionCookie(res: Response, token: string): void {
-  res.cookie(config.session.cookieName, token, {
-    httpOnly: true,
-    secure: config.nodeEnv === 'production',
-    sameSite: 'strict',
-    path: config.session.cookiePath,
-    maxAge: config.session.maxAgeMs,
-    // No `domain` attribute → host-only scoping (zero cross-subdomain exposure)
-  });
+if (sweepInterval.unref) {
+  sweepInterval.unref();
 }
 
 /**
- * Clear the admin session cookie from the browser.
+ * Cookie options for host-only, XSS-immune, path-scoped admin session tokens
  */
-export function clearSessionCookie(res: Response): void {
-  res.clearCookie(config.session.cookieName, {
+export function getAdminCookieOptions(req?: Request) {
+  const isSecure =
+    config.cookieSecure ||
+    (req ? req.secure || req.headers['x-forwarded-proto'] === 'https' : false);
+
+  return {
     httpOnly: true,
-    secure: config.nodeEnv === 'production',
-    sameSite: 'strict',
-    path: config.session.cookiePath,
-  });
+    secure: isSecure,
+    sameSite: 'strict' as const,
+    path: '/api/v1/admin',
+    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+  };
 }
 
 /**
- * Evict a specific session from the LRU cache.
- * Called on logout to ensure immediate invalidation.
+ * Evict a session from in-memory cache upon logout
  */
-export function invalidateSessionCache(token: string): void {
+export function evictSessionCache(token: string): void {
   sessionCache.delete(token);
 }
 
 /**
- * Clear entire session cache.
- * Called on logout-all to force re-validation against DB.
+ * Evict all sessions for a specific admin ID from in-memory cache
  */
-export function clearEntireSessionCache(): void {
-  sessionCache.clear();
+export function evictAdminSessionsCache(adminId: number): void {
+  const tokensToDelete: string[] = [];
+  for (const [token, entry] of sessionCache.entries()) {
+    if (entry && entry.admin.id === adminId) {
+      tokensToDelete.push(token);
+    }
+  }
+  for (const token of tokensToDelete) {
+    sessionCache.delete(token);
+  }
+}
+
+/**
+ * Cache an authenticated session in memory
+ */
+export function cacheSession(token: string, admin: AuthenticatedAdmin, expiresAt: Date): void {
+  sessionCache.set(token, {
+    admin,
+    expiresAt: expiresAt.getTime(),
+  });
+}
+
+/**
+ * Core Session Verification Middleware.
+ * Validates the host-only cookie or Authorization Bearer header against DB / LRU cache.
+ */
+export async function verifyAdminSession(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const rawToken =
+      req.cookies?.[ADMIN_COOKIE_NAME] ||
+      req.headers.authorization?.replace(/^Bearer\s+/i, '');
+
+    const token = typeof rawToken === 'string' ? rawToken.trim() : '';
+
+    if (!token) {
+      return next(new UnauthorizedError('Admin authentication required'));
+    }
+
+    // 1. Fast Path: In-memory LRU Cache Hit
+    const cached = sessionCache.get(token);
+    if (cached && cached.expiresAt > Date.now()) {
+      req.admin = cached.admin;
+      req.sessionId = token;
+      return next();
+    }
+
+    // 2. Database Lookup: Verify session and active admin status
+    //    Expiry is computed in SQL (TIMESTAMPDIFF against NOW()) to avoid
+    //    driver timezone drift between MariaDB local time and JS UTC.
+    const rows = await db
+      .select({
+        sessionId: adminSessions.id,
+        adminId: adminSessions.adminId,
+        expiresAt: adminSessions.expiresAt,
+        secondsRemaining: sql<number>`TIMESTAMPDIFF(SECOND, NOW(), ${adminSessions.expiresAt})`,
+        username: admins.username,
+        email: admins.email,
+        fullName: admins.fullName,
+        role: admins.role,
+        isActive: admins.isActive,
+      })
+      .from(adminSessions)
+      .innerJoin(admins, eq(adminSessions.adminId, admins.id))
+      .where(eq(adminSessions.id, token))
+      .limit(1);
+
+    if (rows.length === 0) {
+      res.clearCookie(ADMIN_COOKIE_NAME, { path: '/api/v1/admin' });
+      return next(new UnauthorizedError('Invalid or expired admin session'));
+    }
+
+    const sessionRow = rows[0];
+
+    // Check expiry (SQL-computed, timezone-safe)
+    if ((sessionRow.secondsRemaining ?? 0) <= 0) {
+      // Clean up expired session from DB
+      void db.delete(adminSessions).where(eq(adminSessions.id, token)).catch(() => {});
+      sessionCache.delete(token);
+      res.clearCookie(ADMIN_COOKIE_NAME, { path: '/api/v1/admin' });
+      return next(new UnauthorizedError('Session expired. Please log in again.'));
+    }
+
+    // Check if admin account is active
+    if (!sessionRow.isActive) {
+      sessionCache.delete(token);
+      res.clearCookie(ADMIN_COOKIE_NAME, { path: '/api/v1/admin' });
+      return next(new ForbiddenError('Admin account has been deactivated'));
+    }
+
+    const authenticatedAdmin: AuthenticatedAdmin = {
+      id: sessionRow.adminId,
+      username: sessionRow.username,
+      email: sessionRow.email,
+      fullName: sessionRow.fullName,
+      role: sessionRow.role as AuthenticatedAdmin['role'],
+    };
+
+    // Cache in memory with SQL-computed remaining lifetime (timezone-safe)
+    cacheSession(token, authenticatedAdmin, new Date(Date.now() + (sessionRow.secondsRemaining ?? 0) * 1000));
+
+    // Update lastActiveAt in background (non-blocking)
+    void db
+      .update(adminSessions)
+      .set({ lastActiveAt: sql`NOW()` })
+      .where(eq(adminSessions.id, token))
+      .catch(() => {});
+
+    req.admin = authenticatedAdmin;
+    req.sessionId = token;
+    return next();
+  } catch (err) {
+    return next(err);
+  }
+}
+
+/**
+ * Role-Based Access Control (RBAC) Guard Middleware
+ */
+export function requireRole(...allowedRoles: Array<'superadmin' | 'editor' | 'translator'>) {
+  return (req: Request, _res: Response, next: NextFunction) => {
+    if (!req.admin) {
+      return next(new UnauthorizedError('Admin authentication required'));
+    }
+
+    if (!allowedRoles.includes(req.admin.role)) {
+      return next(
+        new ForbiddenError(
+          `Forbidden: Insufficient privileges. Required role: [${allowedRoles.join(', ')}]`
+        )
+      );
+    }
+
+    return next();
+  };
 }

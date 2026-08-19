@@ -3,6 +3,8 @@ import { getTags } from '../controllers/tagController.js';
 import { cachedRoute } from '../middleware/cacheMiddleware.js';
 import { CACHE_TTL } from '../cache/index.js';
 import { tagsLimiter } from '../middleware/rateLimiter.js';
+import { validateQuery } from '../validators/queryValidator.js';
+import { TagQuerySchema } from '../validators/publicQueryValidator.js';
 
 const router = Router();
 
@@ -25,6 +27,7 @@ const router = Router();
  */
 router.get(
   '/',
+  validateQuery(TagQuerySchema),
   tagsLimiter,
   cachedRoute('tags', CACHE_TTL.TAGS, CACHE_TTL.CATEGORIES_STALE)(getTags)
 );

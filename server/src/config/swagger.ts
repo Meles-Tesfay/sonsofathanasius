@@ -474,11 +474,182 @@ export const openApiSpec = {
         },
       },
     },
+    '/admin/auth/login': {
+      post: {
+        tags: ['Admin'],
+        summary: 'Admin Login',
+        description: 'Authenticates administrator via username/email and password. Sets an httpOnly, host-only secure cookie (soa_admin_session) scoped to /api/v1/admin.',
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['identifier', 'password'],
+                properties: {
+                  identifier: {
+                    type: 'string',
+                    description: 'Admin username or registered email address',
+                    example: 'admin',
+                  },
+                  password: {
+                    type: 'string',
+                    format: 'password',
+                    description: 'Admin password',
+                    example: 'AdminSecretPass123!',
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'Login successful. Returns admin profile and issues soa_admin_session cookie.',
+            headers: {
+              'Set-Cookie': {
+                schema: {
+                  type: 'string',
+                  example: 'soa_admin_session=abc123...; Path=/api/v1/admin; HttpOnly; SameSite=Strict',
+                },
+              },
+            },
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean', example: true },
+                    data: {
+                      type: 'object',
+                      properties: {
+                        admin: {
+                          type: 'object',
+                          properties: {
+                            id: { type: 'integer', example: 1 },
+                            username: { type: 'string', example: 'admin' },
+                            email: { type: 'string', example: 'admin@sonsofathanasius.com' },
+                            fullName: { type: 'string', example: 'Admin User' },
+                            role: { type: 'string', enum: ['superadmin', 'editor', 'translator'], example: 'superadmin' },
+                          },
+                        },
+                      },
+                    },
+                    message: { type: 'string', example: 'Login successful' },
+                  },
+                },
+              },
+            },
+          },
+          '401': {
+            description: 'Invalid credentials or deactivated account',
+          },
+          '429': {
+            description: 'Too many login attempts from this IP (rate limit: 5/15m)',
+          },
+        },
+      },
+    },
+    '/admin/auth/logout': {
+      post: {
+        tags: ['Admin'],
+        summary: 'Admin Logout',
+        description: 'Terminates current session in MariaDB, evicts in-memory cache, and clears the session cookie.',
+        security: [{ SessionAuth: [] }],
+        responses: {
+          '200': {
+            description: 'Logged out successfully',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean', example: true },
+                    data: { type: 'null', example: null },
+                    message: { type: 'string', example: 'Logged out successfully' },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    },
+    '/admin/auth/me': {
+      get: {
+        tags: ['Admin'],
+        summary: 'Get Authenticated Admin Profile',
+        description: 'Returns the current authenticated admin user and permissions from the active session.',
+        security: [{ SessionAuth: [] }],
+        responses: {
+          '200': {
+            description: 'Current admin profile',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean', example: true },
+                    data: {
+                      type: 'object',
+                      properties: {
+                        admin: {
+                          type: 'object',
+                          properties: {
+                            id: { type: 'integer', example: 1 },
+                            username: { type: 'string', example: 'admin' },
+                            email: { type: 'string', example: 'admin@sonsofathanasius.com' },
+                            fullName: { type: 'string', example: 'Admin User' },
+                            role: { type: 'string', enum: ['superadmin', 'editor', 'translator'], example: 'superadmin' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          '401': {
+            description: 'Unauthorized or expired session',
+          },
+        },
+      },
+    },
+    '/admin/auth/logout-all': {
+      post: {
+        tags: ['Admin'],
+        summary: 'Revoke All Admin Sessions',
+        description: 'Remote kill-switch: Deletes all active sessions across all devices for the current admin.',
+        security: [{ SessionAuth: [] }],
+        responses: {
+          '200': {
+            description: 'All sessions terminated successfully',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean', example: true },
+                    data: { type: 'null', example: null },
+                    message: { type: 'string', example: 'All sessions terminated successfully' },
+                  },
+                },
+              },
+            },
+          },
+          '401': {
+            description: 'Unauthorized',
+          },
+        },
+      },
+    },
     '/admin/covers/upload': {
       post: {
         tags: ['Admin'],
         summary: 'Upload Article Cover Image',
         description: 'Uploads and stores a WebP or JPEG cover image with server-side magic byte validation (≤500KB).',
+        security: [{ SessionAuth: [] }],
         requestBody: {
           required: true,
           content: {
@@ -520,6 +691,137 @@ export const openApiSpec = {
               },
             },
           },
+          '400': { description: 'Invalid image format or file size exceeded' },
+          '401': { description: 'Unauthorized' },
+          '403': { description: 'Forbidden (Requires Superadmin or Editor role)' },
+        },
+      },
+    },
+    '/admin/articles': {
+      post: {
+        tags: ['Admin'],
+        summary: 'Create Article (Atomic)',
+        description: 'Atomically creates master article container, multilingual translations, media, and tag relationships in a single transaction with eager PDF pre-generation and cache invalidation.',
+        security: [{ SessionAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['categoryId', 'translations'],
+                properties: {
+                  categoryId: { type: 'integer', example: 1 },
+                  authorName: { type: 'string', example: 'ዘአትናቴዎስ' },
+                  coverImage: { type: 'string', example: '/uploads/covers/cover_sample.webp' },
+                  status: { type: 'string', enum: ['draft', 'published', 'archived'], default: 'draft' },
+                  pdfEnabled: { type: 'integer', enum: [0, 1], default: 0 },
+                  publishedAt: { type: 'string', format: 'date-time' },
+                  tagIds: { type: 'array', items: { type: 'integer' }, example: [1, 2] },
+                  media: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      required: ['mediaKind', 'platform', 'embedId'],
+                      properties: {
+                        mediaKind: { type: 'string', enum: ['video', 'audio'] },
+                        platform: { type: 'string', example: 'youtube' },
+                        embedId: { type: 'string', example: 'dQw4w9WgXcQ' },
+                        caption: { type: 'string', example: 'Theological discourse video' },
+                        sortOrder: { type: 'integer', default: 0 },
+                      },
+                    },
+                  },
+                  translations: {
+                    type: 'array',
+                    minItems: 1,
+                    items: {
+                      type: 'object',
+                      required: ['langCode', 'title', 'body'],
+                      properties: {
+                        langCode: { type: 'string', enum: ['am', 'en', 'om', 'ti'], example: 'am' },
+                        title: { type: 'string', example: 'የኢየሱስ ክርስቶስ አምላክነት' },
+                        slug: { type: 'string', example: 'deity-of-jesus-christ' },
+                        summary: { type: 'string', example: 'ጥናታዊ የዕቅበተ እምነት ጽሑፍ።' },
+                        body: { type: 'string', example: '<p>የጌታችን አምላክነት...</p>' },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '201': {
+            description: 'Article created successfully',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    success: { type: 'boolean', example: true },
+                    data: {
+                      type: 'object',
+                      properties: {
+                        id: { type: 'integer', example: 42 },
+                        categoryId: { type: 'integer', example: 1 },
+                        authorName: { type: 'string', example: 'ዘአትናቴዎስ' },
+                        status: { type: 'string', example: 'published' },
+                        pdfEnabled: { type: 'integer', example: 1 },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          '400': { description: 'Invalid payload or schema validation error' },
+          '401': { description: 'Unauthorized' },
+          '403': { description: 'Forbidden (Requires Superadmin or Editor role)' },
+        },
+      },
+    },
+    '/admin/articles/{id}/translations': {
+      post: {
+        tags: ['Admin'],
+        summary: 'Upsert Article Translation',
+        description: 'Adds or updates a translation for an existing article container. Automatically triggers cache eviction and eager PDF generation.',
+        security: [{ SessionAuth: [] }],
+        parameters: [
+          {
+            name: 'id',
+            in: 'path',
+            required: true,
+            schema: { type: 'integer' },
+            description: 'Parent article numeric ID',
+          },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['langCode', 'title', 'body'],
+                properties: {
+                  langCode: { type: 'string', enum: ['am', 'en', 'om', 'ti'], example: 'ti' },
+                  title: { type: 'string', example: 'መለኮትነት ኢየሱስ ክርስቶስ' },
+                  slug: { type: 'string', example: 'deity-of-christ-tigrigna' },
+                  summary: { type: 'string', example: 'ትምህርቲ ተዋህዶ ብትግርኛ' },
+                  body: { type: 'string', example: '<p>ትምህርቲ ብዛዕባ ጎይታና...</p>' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'Translation updated successfully' },
+          '201': { description: 'Translation created successfully' },
+          '400': { description: 'Invalid payload' },
+          '401': { description: 'Unauthorized' },
+          '403': { description: 'Forbidden (Requires Superadmin, Editor, or Translator role)' },
+          '404': { description: 'Parent article not found' },
         },
       },
     },

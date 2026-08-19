@@ -1,4 +1,6 @@
 import { Request, Response } from 'express';
+import { ValidatedRequest } from '../validators/queryValidator.js';
+import { DailyQueryParams } from '../validators/publicQueryValidator.js';
 
 export interface DailyReadingItem {
   saintOfTheDay: Record<string, string>;
@@ -226,7 +228,8 @@ function getApproximateEthiopianDate(date: Date): string {
  * GET /api/v1/daily?lang=am
  */
 export async function getDailyReading(req: Request, _res: Response) {
-  const lang = (typeof req.query.lang === 'string' ? req.query.lang : 'am').toLowerCase();
+  const query = (req as ValidatedRequest<DailyQueryParams>).validatedQuery || { lang: 'am' };
+  const lang = query.lang || 'am';
   const now = new Date();
   const dayOfYear = getDayOfYear(now);
   const isoDate = now.toISOString().slice(0, 10);

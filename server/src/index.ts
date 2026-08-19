@@ -9,6 +9,10 @@ import apiRouter from './routes/index.js';
 
 const app = express();
 
+// 0. Trust only loopback reverse proxies (cPanel LiteSpeed + Passenger).
+//    NOT `true`: that would let clients spoof X-Forwarded-For and bypass rate limits.
+app.set('trust proxy', 'loopback');
+
 // 1. Security & Method Allowlist Middleware
 app.use(securityHeaders);
 app.use(corsMiddleware);
@@ -48,36 +52,44 @@ app.use(errorHandler);
 
 import { initializeSearchIndex } from './services/searchService.js';
 import { reconcileMissingPdfs } from './services/pdfService.js';
+import { sweepExpiredSessions } from './middleware/auth.js';
+
+/**
+ * Ensure storage directories exist on disk
+ */
+export function ensureStorageDirs(): void {
+  if (!fs.existsSync(config.storage.coversDir)) {
+    fs.mkdirSync(config.storage.coversDir, { recursive: true });
+  }
+  if (!fs.existsSync(config.storage.pdfDir)) {
+    fs.mkdirSync(config.storage.pdfDir, { recursive: true });
+  }
+}
 
 // 9. Server Boot
-let server: import('http').Server | undefined;
+ensureStorageDirs();
 
-if (process.env.NODE_ENV !== 'test') {
-  server = app.listen(config.port, async () => {
+if (config.nodeEnv !== 'test') {
+  const server = app.listen(config.port, async () => {
     console.log(`☦ [Sons of Athanasius API] Server running on http://localhost:${config.port} (${config.nodeEnv})`);
-
-    // Ensure upload directories exist on disk
-    if (!fs.existsSync(config.storage.coversDir)) {
-      fs.mkdirSync(config.storage.coversDir, { recursive: true });
-    }
-    if (!fs.existsSync(config.storage.pdfDir)) {
-      fs.mkdirSync(config.storage.pdfDir, { recursive: true });
-    }
 
     // Warm up in-memory full-text search index
     await initializeSearchIndex();
 
     // Reconcile and backfill any missing PDFs for published articles
     await reconcileMissingPdfs();
+
+    // Clean up any stale expired sessions on startup
+    await sweepExpiredSessions();
+  });
+
+  // Graceful Shutdown
+  process.on('SIGTERM', () => {
+    console.log('SIGTERM received. Shutting down gracefully...');
+    server.close(() => {
+      console.log('Process terminated.');
+    });
   });
 }
-
-// Graceful Shutdown
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received. Shutting down gracefully...');
-  server?.close(() => {
-    console.log('Process terminated.');
-  });
-});
 
 export default app;

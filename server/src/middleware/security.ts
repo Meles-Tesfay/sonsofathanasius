@@ -42,20 +42,21 @@ const ALLOWED_PRODUCTION_ORIGINS = new Set([
   'https://admin.sonsofathanasius.com',
 ]);
 
-// Local development origin pattern
-const LOCAL_DEV_REGEX = /^http:\/\/(localhost|127\.0\.0\.1|([a-zA-Z0-9-]+\.)*localhost)(:\d+)?$/;
+// Local development origin pattern (exact localhost or loopback IP only — no wildcard subdomains)
+const LOCAL_DEV_REGEX = /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
 
 export const isAllowedOrigin = (origin?: string): boolean => {
   if (!origin) return true; // Allow non-browser requests (e.g. cURL, cron tasks, server-to-server)
 
-  // 1. Check explicit production origin whitelist
+  // 1. In production: strictly permit only explicit production origins
+  if (config.isProduction) {
+    return ALLOWED_PRODUCTION_ORIGINS.has(origin);
+  }
+
+  // 2. In non-production: check production origins, explicit clientUrl, and local development host patterns
   if (ALLOWED_PRODUCTION_ORIGINS.has(origin)) return true;
-
-  // 2. Check local development host patterns
-  if (LOCAL_DEV_REGEX.test(origin)) return true;
-
-  // 3. Check explicitly configured client URL
   if (config.clientUrl && origin === config.clientUrl) return true;
+  if (LOCAL_DEV_REGEX.test(origin)) return true;
 
   return false;
 };
