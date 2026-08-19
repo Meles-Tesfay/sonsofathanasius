@@ -1,7 +1,8 @@
 import { db, poolConnection } from './index.js';
-import { categories, tags, content, contentTranslations } from './schema.js';
+import { categories, tags, content, contentTranslations, admins } from './schema.js';
 import { eq } from 'drizzle-orm';
 import { processArticleContent } from '../services/sanitizerService.js';
+import { hashPassword } from '../utils/crypto.js';
 
 async function seed() {
   console.log('🌱 [Seed] Starting database seeding for Sons of Athanasius...');
@@ -192,6 +193,24 @@ async function seed() {
     }
 
     console.log(`   ✓ Seeded and converged sample article (ID: ${articleId}) 'am' and 'en' translations with unbracketed data-ref`);
+  }
+
+  // 4. Seed Default SuperAdmin
+  console.log('🌱 [Seed] Seeding Default SuperAdmin User...');
+  const existingAdmin = await db.select().from(admins).where(eq(admins.username, 'admin')).limit(1);
+  if (existingAdmin.length === 0) {
+    const passwordHash = await hashPassword('AdminSecretPass123!');
+    await db.insert(admins).values({
+      username: 'admin',
+      email: 'admin@sonsofathanasius.com',
+      passwordHash,
+      fullName: 'ደቂቀ አትናቴዎስ Admin',
+      role: 'superadmin',
+      isActive: 1,
+    });
+    console.log('   ✓ Seeded initial superadmin (username: admin, email: admin@sonsofathanasius.com)');
+  } else {
+    console.log('   ✓ Superadmin already exists');
   }
 
   console.log('✅ [Seed] Database seeding completed successfully!');

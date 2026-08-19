@@ -12,6 +12,13 @@ import { eq, and, desc, asc, sql, inArray } from 'drizzle-orm';
 import { extractScriptureCitations } from '../services/citationParser.js';
 import { recordSlugIdMapping } from '../cache/viewCounter.js';
 import { NotFoundError } from '../middleware/errorHandler.js';
+import { ValidatedRequest } from '../validators/queryValidator.js';
+import {
+  ArticleFeedQueryParams,
+  LatestArticlesQueryParams,
+  ArticleDetailQueryParams,
+  ArticleSlugParams,
+} from '../validators/publicQueryValidator.js';
 
 export interface ArticleListItem {
   id: number;
@@ -104,108 +111,74 @@ function getLocalizedCategoryName(
  * GET /api/v1/articles?category={slug}&tag={slug}&page=1&limit=12&lang=am&sort=latest|popular
  */
 export async function getArticles(req: Request, _res: Response) {
-  const lang = (typeof req.query.lang === 'string' ? req.query.lang : 'am').toLowerCase();
-  const categorySlug = typeof req.query.category === 'string' ? req.query.category.trim() : undefined;
-  const tagSlug = typeof req.query.tag === 'string' ? req.query.tag.trim() : undefined;
-  const sort = req.query.sort === 'popular' ? 'popular' : 'latest';
-  const page = Math.max(1, parseInt(String(req.query.page), 10) || 1);
-  const limit = Math.min(50, Math.max(1, parseInt(String(req.query.limit), 10) || 12));
+  const query = (req as ValidatedRequest<ArticleFeedQueryParams>).validatedQuery || {
+    lang: 'am',
+    page: 1,
+    limit: 12,
+    sort: 'latest',
+  };
+  const { lang, category, tag, page, limit, sort } = query;
   const offset = (page - 1) * limit;
 
-  // 1. Resolve Category ID filter if requested
-  let categoryIdFilter: number | undefined;
-  if (categorySlug) {
-    const cat = await db.select().from(categories).where(eq(categories.slug, categorySlug)).limit(1);
-    if (cat.length > 0) {
-      categoryIdFilter = cat[0].id;
-    } else {
-      // Requested category does not exist -> return empty page
-      return {
-        success: true,
-        data: [],
-        meta: {
-          page,
-          limit,
-          total: 0,
-          totalPages: 0,
-          hasNext: false,
-          hasPrev: false,
-          timestamp: new Date().toISOString(),
-          lang,
-          category: categorySlug,
-        },
-      };
-    }
-  }
-
-  // 2. Resolve Tag ID filter if requested
-  let tagContentIds: number[] | undefined;
-  if (tagSlug) {
-    const tagRows = await db.select().from(tags).where(eq(tags.slug, tagSlug)).limit(1);
-    if (tagRows.length > 0) {
-      const tagId = tagRows[0].id;
-      const contentTagRows = await db
-        .select({ contentId: contentTags.contentId })
-        .from(contentTags)
-        .where(eq(contentTags.tagId, tagId));
-      tagContentIds = contentTagRows.map((r) => r.contentId);
-      if (tagContentIds.length === 0) {
-        return {
-          success: true,
-          data: [],
-          meta: {
-            page,
-            limit,
-            total: 0,
-            totalPages: 0,
-            hasNext: false,
-            hasPrev: false,
-            timestamp: new Date().toISOString(),
-            lang,
-            tag: tagSlug,
-          },
-        };
-      }
-    } else {
-      // Requested tag does not exist
-      return {
-        success: true,
-        data: [],
-        meta: {
-          page,
-          limit,
-          total: 0,
-          totalPages: 0,
-          hasNext: false,
-          hasPrev: false,
-          timestamp: new Date().toISOString(),
-          lang,
-          tag: tagSlug,
-        },
-      };
-    }
-  }
-
-  // 3. Build conditions for published articles
+  // Build conditions for published articles using SQL EXISTS for category and tag
   const conditions = [eq(content.status, 'published')];
-  if (categoryIdFilter !== undefined) {
-    conditions.push(eq(content.categoryId, categoryIdFilter));
+
+  if (category) {
+    conditions.push(
+      sql`EXISTS (SELECT 1 FROM ${categories} WHERE ${categories.id} = ${content.categoryId} AND ${categories.slug} = ${category})`
+    );
   }
-  if (tagContentIds !== undefined) {
-    conditions.push(inArray(content.id, tagContentIds));
+
+  if (tag) {
+    conditions.push(
+      sql`EXISTS (
+        SELECT 1 FROM ${contentTags}
+        INNER JOIN ${tags} ON ${contentTags.tagId} = ${tags.id}
+        WHERE ${contentTags.contentId} = ${content.id} AND ${tags.slug} = ${tag}
+      )`
+    );
   }
 
   const whereClause = and(...conditions);
 
-  // 4. Count total matching articles
-  const [totalCountResult] = await db
-    .select({ count: sql<number>`count(*)` })
-    .from(content)
-    .where(whereClause);
-  const total = Number(totalCountResult?.count || 0);
-  const totalPages = Math.ceil(total / limit) || 1;
+  const sortClause = sort === 'popular'
+    ? [desc(content.viewCount), desc(content.publishedAt)]
+    : [desc(content.publishedAt), desc(content.id)];
 
-  if (total === 0) {
+  // Run COUNT(*) and paginated list queries in Promise.all
+  const [countRows, matchedArticles] = await Promise.all([
+    db
+      .select({ count: sql<number>`count(*)` })
+      .from(content)
+      .where(whereClause),
+    db
+      .select({
+        id: content.id,
+        categoryId: content.categoryId,
+        authorName: content.authorName,
+        coverImage: content.coverImage,
+        pdfEnabled: content.pdfEnabled,
+        viewCount: content.viewCount,
+        publishedAt: content.publishedAt,
+        catId: categories.id,
+        catSlug: categories.slug,
+        catNameEn: categories.nameEn,
+        catNameAm: categories.nameAm,
+        catNameOm: categories.nameOm,
+        catNameTi: categories.nameTi,
+      })
+      .from(content)
+      .innerJoin(categories, eq(content.categoryId, categories.id))
+      .where(whereClause)
+      .orderBy(...sortClause)
+      .limit(limit)
+      .offset(offset),
+  ]);
+
+  const total = Number(countRows[0]?.count || 0);
+  const totalPages = Math.ceil(total / limit) || 0;
+
+  if (total === 0 || matchedArticles.length === 0) {
     return {
       success: true,
       data: [],
@@ -218,65 +191,39 @@ export async function getArticles(req: Request, _res: Response) {
         hasPrev: false,
         timestamp: new Date().toISOString(),
         lang,
+        category,
+        tag,
+        sort,
       },
     };
   }
 
-  // 5. Query paginated article content rows
-  const sortClause = sort === 'popular'
-    ? [desc(content.viewCount), desc(content.publishedAt)]
-    : [desc(content.publishedAt), desc(content.id)];
-
-  const matchedArticles = await db
-    .select({
-      id: content.id,
-      categoryId: content.categoryId,
-      authorName: content.authorName,
-      coverImage: content.coverImage,
-      pdfEnabled: content.pdfEnabled,
-      viewCount: content.viewCount,
-      publishedAt: content.publishedAt,
-      catId: categories.id,
-      catSlug: categories.slug,
-      catNameEn: categories.nameEn,
-      catNameAm: categories.nameAm,
-      catNameOm: categories.nameOm,
-      catNameTi: categories.nameTi,
-    })
-    .from(content)
-    .innerJoin(categories, eq(content.categoryId, categories.id))
-    .where(whereClause)
-    .orderBy(...sortClause)
-    .limit(limit)
-    .offset(offset);
-
   const contentIds = matchedArticles.map((a) => a.id);
 
-  // 6. Batch fetch all translations for matched articles
-  const allTranslations = await db
-    .select()
-    .from(contentTranslations)
-    .where(inArray(contentTranslations.contentId, contentIds));
+  // Batch fetch translations and tags for matched articles in parallel
+  const [allTranslations, articleTagsRows] = await Promise.all([
+    db
+      .select()
+      .from(contentTranslations)
+      .where(inArray(contentTranslations.contentId, contentIds)),
+    db
+      .select({
+        contentId: contentTags.contentId,
+        tagId: tags.id,
+        tagSlug: tags.slug,
+        tagName: tags.name,
+      })
+      .from(contentTags)
+      .innerJoin(tags, eq(contentTags.tagId, tags.id))
+      .where(inArray(contentTags.contentId, contentIds)),
+  ]);
 
-  // Map translations by contentId
   const translationsByContent = new Map<number, typeof contentTranslations.$inferSelect[]>();
   for (const trans of allTranslations) {
     const list = translationsByContent.get(trans.contentId) || [];
     list.push(trans);
     translationsByContent.set(trans.contentId, list);
   }
-
-  // 7. Batch fetch tags for matched articles
-  const articleTagsRows = await db
-    .select({
-      contentId: contentTags.contentId,
-      tagId: tags.id,
-      tagSlug: tags.slug,
-      tagName: tags.name,
-    })
-    .from(contentTags)
-    .innerJoin(tags, eq(contentTags.tagId, tags.id))
-    .where(inArray(contentTags.contentId, contentIds));
 
   const tagsByContent = new Map<number, Array<{ id: number; slug: string; name: string }>>();
   for (const row of articleTagsRows) {
@@ -285,7 +232,7 @@ export async function getArticles(req: Request, _res: Response) {
     tagsByContent.set(row.contentId, list);
   }
 
-  // 8. Assemble localized items with smart fallback
+  // Assemble localized items with smart fallback
   const items: ArticleListItem[] = matchedArticles.map((article) => {
     const translations = translationsByContent.get(article.id) || [];
     
@@ -351,8 +298,8 @@ export async function getArticles(req: Request, _res: Response) {
       hasPrev: page > 1,
       timestamp: new Date().toISOString(),
       lang,
-      category: categorySlug,
-      tag: tagSlug,
+      category,
+      tag,
       sort,
     },
   };
@@ -362,13 +309,140 @@ export async function getArticles(req: Request, _res: Response) {
  * Get latest articles feed for homepage hero/grid
  * GET /api/v1/articles/latest?lang=am&limit=6
  */
-export async function getLatestArticles(req: Request, res: Response) {
-  req.query.sort = 'latest';
-  req.query.page = '1';
-  if (!req.query.limit) {
-    req.query.limit = '6';
+export async function getLatestArticles(req: Request, _res: Response) {
+  const query = (req as ValidatedRequest<LatestArticlesQueryParams>).validatedQuery || {
+    lang: 'am',
+    limit: 6,
+  };
+  const { lang, limit } = query;
+
+  const matchedArticles = await db
+    .select({
+      id: content.id,
+      categoryId: content.categoryId,
+      authorName: content.authorName,
+      coverImage: content.coverImage,
+      pdfEnabled: content.pdfEnabled,
+      viewCount: content.viewCount,
+      publishedAt: content.publishedAt,
+      catId: categories.id,
+      catSlug: categories.slug,
+      catNameEn: categories.nameEn,
+      catNameAm: categories.nameAm,
+      catNameOm: categories.nameOm,
+      catNameTi: categories.nameTi,
+    })
+    .from(content)
+    .innerJoin(categories, eq(content.categoryId, categories.id))
+    .where(eq(content.status, 'published'))
+    .orderBy(desc(content.publishedAt), desc(content.id))
+    .limit(limit);
+
+  if (matchedArticles.length === 0) {
+    return {
+      success: true,
+      data: [],
+      meta: {
+        limit,
+        count: 0,
+        timestamp: new Date().toISOString(),
+        lang,
+      },
+    };
   }
-  return getArticles(req, res);
+
+  const contentIds = matchedArticles.map((a) => a.id);
+
+  const [allTranslations, articleTagsRows] = await Promise.all([
+    db
+      .select()
+      .from(contentTranslations)
+      .where(inArray(contentTranslations.contentId, contentIds)),
+    db
+      .select({
+        contentId: contentTags.contentId,
+        tagId: tags.id,
+        tagSlug: tags.slug,
+        tagName: tags.name,
+      })
+      .from(contentTags)
+      .innerJoin(tags, eq(contentTags.tagId, tags.id))
+      .where(inArray(contentTags.contentId, contentIds)),
+  ]);
+
+  const translationsByContent = new Map<number, typeof contentTranslations.$inferSelect[]>();
+  for (const trans of allTranslations) {
+    const list = translationsByContent.get(trans.contentId) || [];
+    list.push(trans);
+    translationsByContent.set(trans.contentId, list);
+  }
+
+  const tagsByContent = new Map<number, Array<{ id: number; slug: string; name: string }>>();
+  for (const row of articleTagsRows) {
+    const list = tagsByContent.get(row.contentId) || [];
+    list.push({ id: row.tagId, slug: row.tagSlug, name: row.tagName });
+    tagsByContent.set(row.contentId, list);
+  }
+
+  const items: ArticleListItem[] = matchedArticles.map((article) => {
+    const translations = translationsByContent.get(article.id) || [];
+    let chosen = translations.find((t) => t.langCode.toLowerCase() === lang);
+    let isFallback = false;
+
+    if (!chosen) {
+      chosen = translations.find((t) => t.langCode.toLowerCase() === 'am');
+      if (chosen) {
+        isFallback = true;
+      }
+    }
+
+    if (!chosen && translations.length > 0) {
+      chosen = translations[0];
+      isFallback = true;
+    }
+
+    const localizedCategoryName = getLocalizedCategoryName(
+      {
+        nameAm: article.catNameAm,
+        nameEn: article.catNameEn,
+        nameOm: article.catNameOm,
+        nameTi: article.catNameTi,
+        slug: article.catSlug,
+      },
+      lang
+    );
+
+    return {
+      id: article.id,
+      slug: chosen?.slug || `article-${article.id}`,
+      title: chosen?.title || 'Untitled',
+      summary: chosen?.summary || null,
+      authorName: article.authorName,
+      coverImage: article.coverImage,
+      pdfEnabled: article.pdfEnabled,
+      viewCount: article.viewCount,
+      publishedAt: article.publishedAt,
+      langCode: chosen?.langCode || lang,
+      isFallback,
+      category: {
+        id: article.catId,
+        slug: article.catSlug,
+        name: localizedCategoryName,
+      },
+      tags: tagsByContent.get(article.id) || [],
+    };
+  });
+
+  return {
+    success: true,
+    data: items,
+    meta: {
+      limit,
+      count: items.length,
+      timestamp: new Date().toISOString(),
+      lang,
+    },
+  };
 }
 
 /**
@@ -376,9 +450,11 @@ export async function getLatestArticles(req: Request, res: Response) {
  * GET /api/v1/articles/:slug?lang=am
  */
 export async function getArticleBySlug(req: Request, _res: Response) {
-  const rawSlug = req.params.slug;
-  const slugParam = (typeof rawSlug === 'string' ? rawSlug : Array.isArray(rawSlug) ? rawSlug[0] : '')?.trim();
-  const requestedLang = (typeof req.query.lang === 'string' ? req.query.lang : 'am').toLowerCase();
+  const params = (req as ValidatedRequest<any, ArticleSlugParams>).validatedParams || req.params;
+  const query = (req as ValidatedRequest<ArticleDetailQueryParams>).validatedQuery || { lang: 'am' };
+
+  const slugParam = String(params.slug || req.params.slug || '').trim();
+  const requestedLang = query.lang || 'am';
 
   if (!slugParam) {
     throw new NotFoundError('Article slug is required');
@@ -387,9 +463,8 @@ export async function getArticleBySlug(req: Request, _res: Response) {
   // 1. Resolve content translation by slug or ID
   let contentId: number | null = null;
 
-  // Check if slug matches any translation
   const matchedTranslation = await db
-    .select()
+    .select({ contentId: contentTranslations.contentId })
     .from(contentTranslations)
     .where(eq(contentTranslations.slug, slugParam))
     .limit(1);
@@ -397,7 +472,6 @@ export async function getArticleBySlug(req: Request, _res: Response) {
   if (matchedTranslation.length > 0) {
     contentId = matchedTranslation[0].contentId;
   } else {
-    // If slug is numeric ID
     const numericId = parseInt(slugParam, 10);
     if (!isNaN(numericId) && String(numericId) === slugParam) {
       contentId = numericId;
@@ -408,47 +482,68 @@ export async function getArticleBySlug(req: Request, _res: Response) {
     throw new NotFoundError(`Article not found: ${slugParam}`);
   }
 
-  // 2. Fetch parent content and category (verify published status)
-  const articleRows = await db
-    .select({
-      id: content.id,
-      categoryId: content.categoryId,
-      authorName: content.authorName,
-      coverImage: content.coverImage,
-      pdfEnabled: content.pdfEnabled,
-      viewCount: content.viewCount,
-      status: content.status,
-      publishedAt: content.publishedAt,
-      updatedAt: content.updatedAt,
-      catId: categories.id,
-      catSlug: categories.slug,
-      catNameEn: categories.nameEn,
-      catNameAm: categories.nameAm,
-      catNameOm: categories.nameOm,
-      catNameTi: categories.nameTi,
-    })
-    .from(content)
-    .innerJoin(categories, eq(content.categoryId, categories.id))
-    .where(and(eq(content.id, contentId), eq(content.status, 'published')))
-    .limit(1);
+  // 2. Parallelize queries for parent container, all translations, media, and tags
+  const [articleRows, translations, mediaRows, tagRows] = await Promise.all([
+    db
+      .select({
+        id: content.id,
+        categoryId: content.categoryId,
+        authorName: content.authorName,
+        coverImage: content.coverImage,
+        pdfEnabled: content.pdfEnabled,
+        viewCount: content.viewCount,
+        status: content.status,
+        publishedAt: content.publishedAt,
+        updatedAt: content.updatedAt,
+        catId: categories.id,
+        catSlug: categories.slug,
+        catNameEn: categories.nameEn,
+        catNameAm: categories.nameAm,
+        catNameOm: categories.nameOm,
+        catNameTi: categories.nameTi,
+      })
+      .from(content)
+      .innerJoin(categories, eq(content.categoryId, categories.id))
+      .where(and(eq(content.id, contentId), eq(content.status, 'published')))
+      .limit(1),
+    db
+      .select()
+      .from(contentTranslations)
+      .where(eq(contentTranslations.contentId, contentId)),
+    db
+      .select({
+        id: contentMedia.id,
+        mediaKind: contentMedia.mediaKind,
+        platform: contentMedia.platform,
+        embedId: contentMedia.embedId,
+        caption: contentMedia.caption,
+      })
+      .from(contentMedia)
+      .where(eq(contentMedia.contentId, contentId))
+      .orderBy(asc(contentMedia.sortOrder), asc(contentMedia.id)),
+    db
+      .select({
+        id: tags.id,
+        slug: tags.slug,
+        name: tags.name,
+      })
+      .from(contentTags)
+      .innerJoin(tags, eq(contentTags.tagId, tags.id))
+      .where(eq(contentTags.contentId, contentId))
+      .orderBy(asc(tags.name)),
+  ]);
 
   if (articleRows.length === 0) {
     throw new NotFoundError(`Article not found or not published: ${slugParam}`);
   }
 
-  const article = articleRows[0];
-
-  // 3. Fetch all translations for this article
-  const translations = await db
-    .select()
-    .from(contentTranslations)
-    .where(eq(contentTranslations.contentId, contentId));
-
   if (translations.length === 0) {
     throw new NotFoundError(`No translation content found for article: ${contentId}`);
   }
 
-  // 4. Resolve translation with smart fallback
+  const article = articleRows[0];
+
+  // 3. Resolve translation with smart fallback
   let chosenTranslation = translations.find((t) => t.langCode.toLowerCase() === requestedLang);
   let isFallback = false;
   let fallbackFrom: string | undefined;
@@ -469,42 +564,17 @@ export async function getArticleBySlug(req: Request, _res: Response) {
     fallbackFrom = requestedLang;
   }
 
-  // 5. Fetch supplementary media
-  const mediaRows = await db
-    .select({
-      id: contentMedia.id,
-      mediaKind: contentMedia.mediaKind,
-      platform: contentMedia.platform,
-      embedId: contentMedia.embedId,
-      caption: contentMedia.caption,
-    })
-    .from(contentMedia)
-    .where(eq(contentMedia.contentId, contentId))
-    .orderBy(asc(contentMedia.sortOrder), asc(contentMedia.id));
-
-  // 6. Fetch associated tags
-  const tagRows = await db
-    .select({
-      id: tags.id,
-      slug: tags.slug,
-      name: tags.name,
-    })
-    .from(contentTags)
-    .innerJoin(tags, eq(contentTags.tagId, tags.id))
-    .where(eq(contentTags.contentId, contentId))
-    .orderBy(asc(tags.name));
-
-  // 7. Extract scripture citations
+  // 4. Extract scripture citations
   const citations = extractScriptureCitations(chosenTranslation.body);
 
-  // 8. Available translations list
+  // 5. Available translations list
   const availableTranslations = translations.map((t) => ({
     langCode: t.langCode,
     slug: t.slug,
     title: t.title,
   }));
 
-  // 9. Localized Category Name
+  // 6. Localized Category Name
   const localizedCategoryName = getLocalizedCategoryName(
     {
       nameAm: article.catNameAm,
@@ -516,7 +586,7 @@ export async function getArticleBySlug(req: Request, _res: Response) {
     chosenTranslation.langCode
   );
 
-  // 10. Cache slug-to-ID mappings in memory for fast O(1) view tracking on cache HITs
+  // 7. Cache slug-to-ID mappings in memory for fast O(1) view tracking on cache HITs
   recordSlugIdMapping(slugParam, article.id);
   recordSlugIdMapping(chosenTranslation.slug, article.id);
 

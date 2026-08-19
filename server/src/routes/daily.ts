@@ -3,6 +3,8 @@ import { getDailyReading } from '../controllers/dailyController.js';
 import { cachedRoute } from '../middleware/cacheMiddleware.js';
 import { CACHE_TTL } from '../cache/index.js';
 import { dailyLimiter } from '../middleware/rateLimiter.js';
+import { validateQuery } from '../validators/queryValidator.js';
+import { DailyQuerySchema } from '../validators/publicQueryValidator.js';
 
 const router = Router();
 
@@ -31,6 +33,7 @@ const router = Router();
  */
 router.get(
   '/',
+  validateQuery(DailyQuerySchema),
   dailyLimiter,
   cachedRoute(
     (_req) => `daily:${new Date().toISOString().split('T')[0]}`,

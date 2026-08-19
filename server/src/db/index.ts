@@ -11,6 +11,7 @@ export const poolConnection = mysql.createPool({
   password: config.db.password,
   database: config.db.database,
   charset: 'utf8mb4',
+  timezone: 'Z',
   waitForConnections: true,
   connectionLimit: 10,
   maxIdle: 10,
@@ -18,6 +19,11 @@ export const poolConnection = mysql.createPool({
   queueLimit: 0,
   enableKeepAlive: true,
   keepAliveInitialDelay: 0,
+});
+
+// Enforce UTC timezone on every pooled connection so MariaDB current_timestamp() matches UTC
+poolConnection.on('connection', (conn) => {
+  conn.query("SET time_zone = '+00:00'");
 });
 
 // Create and export the Drizzle ORM instance with schema

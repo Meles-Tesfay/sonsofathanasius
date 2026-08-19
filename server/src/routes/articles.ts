@@ -9,6 +9,14 @@ import { cachedRoute } from '../middleware/cacheMiddleware.js';
 import { CACHE_TTL } from '../cache/index.js';
 import { articlesLimiter, pdfLimiter } from '../middleware/rateLimiter.js';
 import { trackViewMiddleware } from '../cache/viewCounter.js';
+import { validateQuery, validateParams } from '../validators/queryValidator.js';
+import {
+  ArticleFeedQuerySchema,
+  LatestArticlesQuerySchema,
+  ArticleDetailQuerySchema,
+  ArticleSlugParamSchema,
+  PdfQuerySchema,
+} from '../validators/publicQueryValidator.js';
 
 const router = Router();
 
@@ -58,6 +66,7 @@ const router = Router();
  */
 router.get(
   '/',
+  validateQuery(ArticleFeedQuerySchema),
   articlesLimiter,
   cachedRoute('articles:feed', CACHE_TTL.ARTICLES_FEED, CACHE_TTL.ARTICLES_FEED_STALE)(getArticles)
 );
@@ -87,6 +96,7 @@ router.get(
  */
 router.get(
   '/latest',
+  validateQuery(LatestArticlesQuerySchema),
   articlesLimiter,
   cachedRoute('articles:latest', CACHE_TTL.ARTICLES_LATEST, CACHE_TTL.ARTICLES_FEED_STALE)(getLatestArticles)
 );
@@ -119,7 +129,13 @@ router.get(
  *               type: string
  *               format: binary
  */
-router.get('/:slug/pdf', pdfLimiter, downloadArticlePdfController);
+router.get(
+  '/:slug/pdf',
+  validateParams(ArticleSlugParamSchema),
+  validateQuery(PdfQuerySchema),
+  pdfLimiter,
+  downloadArticlePdfController
+);
 
 /**
  * @openapi
@@ -148,6 +164,8 @@ router.get('/:slug/pdf', pdfLimiter, downloadArticlePdfController);
  */
 router.get(
   '/:slug',
+  validateParams(ArticleSlugParamSchema),
+  validateQuery(ArticleDetailQuerySchema),
   articlesLimiter,
   trackViewMiddleware,
   cachedRoute('articles:detail', CACHE_TTL.ARTICLE_DETAIL, CACHE_TTL.ARTICLE_DETAIL_STALE)(getArticleBySlug)

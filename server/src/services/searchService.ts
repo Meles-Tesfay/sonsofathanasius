@@ -38,6 +38,7 @@ export interface EnrichedSearchResult {
 // 1. Global In-Memory Index Instance
 let searchEngine: MiniSearch<SearchDocument> | null = null;
 let isIndexing = false;
+let pendingReindex = false;
 
 /**
  * Configure a new MiniSearch engine instance
@@ -120,10 +121,13 @@ async function fetchAllSearchDocuments(): Promise<SearchDocument[]> {
 }
 
 /**
- * Initialize the In-Memory MiniSearch Index on server boot
+ * Initialize the In-Memory MiniSearch Index on server boot or reload
  */
 export async function initializeSearchIndex(): Promise<void> {
-  if (isIndexing) return;
+  if (isIndexing) {
+    pendingReindex = true;
+    return;
+  }
   isIndexing = true;
 
   try {
@@ -140,6 +144,10 @@ export async function initializeSearchIndex(): Promise<void> {
     console.error('❌ [SearchEngine] Failed to initialize search index:', err);
   } finally {
     isIndexing = false;
+    if (pendingReindex) {
+      pendingReindex = false;
+      void initializeSearchIndex();
+    }
   }
 }
 

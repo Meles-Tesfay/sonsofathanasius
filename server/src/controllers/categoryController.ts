@@ -1,8 +1,9 @@
 import { Request, Response } from 'express';
 import { db } from '../db/index.js';
 import { categories, content } from '../db/schema.js';
-import { eq, and, count, asc } from 'drizzle-orm';
-import { sendSuccess } from '../utils/response.js';
+import { eq, count, asc } from 'drizzle-orm';
+import { ValidatedRequest } from '../validators/queryValidator.js';
+import { CategoryQueryParams } from '../validators/publicQueryValidator.js';
 
 export interface LocalizedCategory {
   id: number;
@@ -49,32 +50,33 @@ function getLocalizedCategoryFields(
  * List all active categories with localized metadata & article counts
  * GET /api/v1/categories?lang=am
  */
-export async function getCategories(req: Request, res: Response) {
-  const lang = (typeof req.query.lang === 'string' ? req.query.lang : 'am').toLowerCase();
+export async function getCategories(req: Request, _res: Response) {
+  const query = (req as ValidatedRequest<CategoryQueryParams>).validatedQuery || { lang: 'am' };
+  const lang = query.lang || 'am';
 
-  // 1. Fetch active categories
-  const activeCategories = await db
-    .select()
-    .from(categories)
-    .where(eq(categories.isActive, 1))
-    .orderBy(asc(categories.sortOrder), asc(categories.id));
-
-  // 2. Fetch published article count per category
-  const articleCounts = await db
-    .select({
-      categoryId: content.categoryId,
-      count: count(content.id),
-    })
-    .from(content)
-    .where(eq(content.status, 'published'))
-    .groupBy(content.categoryId);
+  // Fetch active categories and article counts in parallel
+  const [activeCategories, articleCounts] = await Promise.all([
+    db
+      .select()
+      .from(categories)
+      .where(eq(categories.isActive, 1))
+      .orderBy(asc(categories.sortOrder), asc(categories.id)),
+    db
+      .select({
+        categoryId: content.categoryId,
+        count: count(content.id),
+      })
+      .from(content)
+      .where(eq(content.status, 'published'))
+      .groupBy(content.categoryId),
+  ]);
 
   const countMap = new Map<number, number>();
   for (const item of articleCounts) {
     countMap.set(item.categoryId, Number(item.count));
   }
 
-  // 3. Format localized response
+  // Format localized response
   const result: LocalizedCategory[] = activeCategories.map((cat) => {
     const { name, description } = getLocalizedCategoryFields(cat, lang);
     return {

@@ -3,6 +3,8 @@ import { getCategories } from '../controllers/categoryController.js';
 import { cachedRoute } from '../middleware/cacheMiddleware.js';
 import { CACHE_TTL } from '../cache/index.js';
 import { categoriesLimiter } from '../middleware/rateLimiter.js';
+import { validateQuery } from '../validators/queryValidator.js';
+import { CategoryQuerySchema } from '../validators/publicQueryValidator.js';
 
 const router = Router();
 
@@ -33,6 +35,7 @@ const router = Router();
  */
 router.get(
   '/',
+  validateQuery(CategoryQuerySchema),
   categoriesLimiter,
   cachedRoute('categories', CACHE_TTL.CATEGORIES, CACHE_TTL.CATEGORIES_STALE)(getCategories)
 );

@@ -532,43 +532,40 @@ export async function generateAndSaveArticlePdf(data: ArticlePdfData): Promise<s
   await fs.promises.writeFile(tmpPath, buffer);
   await fs.promises.rename(tmpPath, absolutePath);
 
-  // Fetch current translation row to remove previous static PDF if filename changed
-  const prevRows = await db
-    .select({ pdfFilePath: contentTranslations.pdfFilePath })
-    .from(contentTranslations)
-    .where(
-      and(
-        eq(contentTranslations.contentId, data.contentId),
-        eq(contentTranslations.langCode, data.langCode)
-      )
-    )
-    .limit(1);
+  // Clean up any existing older static PDFs for this (articleId, langCode) on disk
+  try {
+    const files = await fs.promises.readdir(config.storage.pdfDir);
+    const prefix = `article_${data.contentId}_`;
+    const suffix = `_${data.langCode}.pdf`;
+    const currentFileName = path.basename(absolutePath);
 
-  if (prevRows.length > 0 && prevRows[0].pdfFilePath && prevRows[0].pdfFilePath !== relativePath) {
-    const oldFileName = path.basename(prevRows[0].pdfFilePath);
-    const oldAbsolutePath = path.join(config.storage.pdfDir, oldFileName);
-    try {
-      if (fs.existsSync(oldAbsolutePath)) {
-        await fs.promises.unlink(oldAbsolutePath);
+    for (const file of files) {
+      if (file.startsWith(prefix) && file.endsWith(suffix) && file !== currentFileName) {
+        const oldPath = path.join(config.storage.pdfDir, file);
+        await fs.promises.unlink(oldPath).catch(() => {});
       }
-    } catch {
-      // Ignore cleanup error
     }
+  } catch (cleanErr) {
+    console.warn(`⚠️ [PDFService] Failed to clean older PDFs for article #${data.contentId} [${data.langCode}]:`, cleanErr);
   }
 
   // Update translation row in MariaDB
-  await db
-    .update(contentTranslations)
-    .set({
-      pdfFilePath: relativePath,
-      pdfGeneratedAt: new Date(),
-    })
-    .where(
-      and(
-        eq(contentTranslations.contentId, data.contentId),
-        eq(contentTranslations.langCode, data.langCode)
-      )
-    );
+  try {
+    await db
+      .update(contentTranslations)
+      .set({
+        pdfFilePath: relativePath,
+        pdfGeneratedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(contentTranslations.contentId, data.contentId),
+          eq(contentTranslations.langCode, data.langCode)
+        )
+      );
+  } catch (dbErr) {
+    console.warn(`⚠️ [PDFService] Could not update pdfFilePath for article #${data.contentId} [${data.langCode}]:`, dbErr);
+  }
 
   return relativePath;
 }
@@ -660,6 +657,74 @@ export async function eagerGenerateArticlePdfs(contentId: number, force: boolean
     }
   } catch (err) {
     console.error(`⚠️ [PDFService] Failed to eager-generate PDFs for article #${contentId}:`, err);
+  }
+}
+
+/**
+ * Eagerly pre-generate static PDF for a single translation of an article
+ */
+export async function eagerGenerateSingleTranslationPdf(
+  contentId: number,
+  langCode: string,
+  force: boolean = true
+): Promise<void> {
+  try {
+    const rows = await db
+      .select({
+        contentId: content.id,
+        pdfEnabled: content.pdfEnabled,
+        status: content.status,
+        authorName: content.authorName,
+        publishedAt: content.publishedAt,
+        updatedAt: content.updatedAt,
+        categoryNameAm: categories.nameAm,
+        categoryNameEn: categories.nameEn,
+        categoryNameOm: categories.nameOm,
+        categoryNameTi: categories.nameTi,
+        title: contentTranslations.title,
+        slug: contentTranslations.slug,
+        summary: contentTranslations.summary,
+        body: contentTranslations.body,
+        langCode: contentTranslations.langCode,
+        pdfFilePath: contentTranslations.pdfFilePath,
+      })
+      .from(content)
+      .innerJoin(categories, eq(content.categoryId, categories.id))
+      .innerJoin(contentTranslations, eq(contentTranslations.contentId, content.id))
+      .where(and(eq(content.id, contentId), eq(contentTranslations.langCode, langCode)));
+
+    if (rows.length === 0) return;
+    const row = rows[0];
+
+    if (row.status !== 'published' || !row.pdfEnabled) {
+      return;
+    }
+
+    if (!force && row.pdfFilePath) {
+      const existingDiskPath = path.join(config.storage.pdfDir, path.basename(row.pdfFilePath));
+      if (fs.existsSync(existingDiskPath)) {
+        return;
+      }
+    }
+
+    const categoryName = resolveCategoryName(row);
+
+    await generateAndSaveArticlePdf({
+      contentId: row.contentId,
+      title: row.title,
+      slug: row.slug,
+      summary: row.summary,
+      body: row.body,
+      authorName: row.authorName,
+      categoryName,
+      langCode: row.langCode,
+      publishedAt: row.publishedAt,
+      updatedAt: row.updatedAt,
+    });
+
+    console.log(`📄 [PDFService] Eagerly generated single translation PDF (${langCode}) for article #${contentId}`);
+  } catch (err) {
+    console.error(`⚠️ [PDFService] Failed to eager-generate PDF for article #${contentId} [${langCode}]:`, err);
   }
 }
 

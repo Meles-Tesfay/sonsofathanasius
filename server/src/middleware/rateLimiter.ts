@@ -1,11 +1,12 @@
 import rateLimit from 'express-rate-limit';
 import { Request, Response } from 'express';
 import { sendError } from '../utils/response.js';
+import { config } from '../config/index.js';
 
 // 1. Coarse Global Safety Net (1000 requests / 15 mins)
 export const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 1000,
+  max: config.isTest ? 10000 : 1000,
   standardHeaders: true,
   legacyHeaders: false,
   handler: (_req: Request, res: Response) => {
@@ -16,7 +17,7 @@ export const generalLimiter = rateLimit({
 // 2. Dedicated Articles Limiter (300 requests / 15 mins)
 export const articlesLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 300,
+  max: config.isTest ? 10000 : 300,
   standardHeaders: true,
   legacyHeaders: false,
   handler: (_req: Request, res: Response) => {
@@ -27,7 +28,7 @@ export const articlesLimiter = rateLimit({
 // 3. Dedicated Categories Limiter (300 requests / 15 mins)
 export const categoriesLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 300,
+  max: config.isTest ? 10000 : 300,
   standardHeaders: true,
   legacyHeaders: false,
   handler: (_req: Request, res: Response) => {
@@ -38,7 +39,7 @@ export const categoriesLimiter = rateLimit({
 // 4. Dedicated Tags Limiter (300 requests / 15 mins)
 export const tagsLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 300,
+  max: config.isTest ? 10000 : 300,
   standardHeaders: true,
   legacyHeaders: false,
   handler: (_req: Request, res: Response) => {
@@ -49,7 +50,7 @@ export const tagsLimiter = rateLimit({
 // 5. Dedicated Daily Lectionary Limiter (300 requests / 15 mins)
 export const dailyLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 300,
+  max: config.isTest ? 10000 : 300,
   standardHeaders: true,
   legacyHeaders: false,
   handler: (_req: Request, res: Response) => {
@@ -60,7 +61,7 @@ export const dailyLimiter = rateLimit({
 // 6. Search API Limiter (60 requests / 1 min)
 export const searchLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
-  max: 60,
+  max: config.isTest ? 10000 : 60,
   standardHeaders: true,
   legacyHeaders: false,
   handler: (_req: Request, res: Response) => {
@@ -68,7 +69,7 @@ export const searchLimiter = rateLimit({
   },
 });
 
-// 7. Contact Form Submission Limiter (1 request / 15 mins)
+// 7. Contact Form Submission Limiter (5 requests / 15 mins)
 export const contactLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
@@ -82,7 +83,7 @@ export const contactLimiter = rateLimit({
 // 8. PDF Generation Limiter (5 downloads / 5 mins)
 export const pdfLimiter = rateLimit({
   windowMs: 5 * 60 * 1000,
-  max: 5,
+  max: config.isTest ? 10000 : 5,
   standardHeaders: true,
   legacyHeaders: false,
   handler: (_req: Request, res: Response) => {
@@ -93,10 +94,27 @@ export const pdfLimiter = rateLimit({
 // 9. Admin API Limiter (100 requests / 15 mins)
 export const adminLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: config.isTest ? 10000 : 100,
   standardHeaders: true,
   legacyHeaders: false,
   handler: (_req: Request, res: Response) => {
     sendError(res, 'Too many admin requests from this IP. Please try again later.', 429);
+  },
+});
+
+// 10. Admin Auth / Login Limiter (5 attempts / 15 mins per IP + identifier)
+//     Composite key: a flood against one username cannot lock out other admins.
+export const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: config.isTest ? 10000 : 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => {
+    const identifier =
+      typeof req.body?.identifier === 'string' ? req.body.identifier.trim().toLowerCase() : '';
+    return `${req.ip || req.socket.remoteAddress || 'unknown'}:${identifier}`;
+  },
+  handler: (_req: Request, res: Response) => {
+    sendError(res, 'Too many login attempts from this IP. Please wait 15 minutes before trying again.', 429);
   },
 });

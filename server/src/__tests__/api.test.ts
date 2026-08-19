@@ -6,7 +6,7 @@ describe('B9: API Integration Tests', () => {
   describe('Health Endpoint', () => {
     it('GET /api/v1/health -> 200 with proper envelope', async () => {
       const response = await request(app).get('/api/v1/health');
-      
+
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
       expect(response.body.data.status).toBe('healthy');
@@ -24,7 +24,7 @@ describe('B9: API Integration Tests', () => {
           subject: 'Test Subject',
           message: 'This is a test message that is at least 10 characters long.',
         });
-      
+
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);
       expect(response.body.data.message).toBe('Message received successfully.');
@@ -38,7 +38,7 @@ describe('B9: API Integration Tests', () => {
           email: 'not-an-email',
           message: 'short',
         });
-      
+
       expect(response.status).toBe(400);
       expect(response.body.success).toBe(false);
       expect(response.body.error).toContain('Validation failed');
@@ -55,7 +55,7 @@ describe('B9: API Integration Tests', () => {
           message: 'Spam message over 10 chars.',
         });
       }
-      
+
       const response = await request(app)
         .post('/api/v1/contact')
         .send({
@@ -63,7 +63,7 @@ describe('B9: API Integration Tests', () => {
           email: 'spam@example.com',
           message: 'Spam message over 10 chars.',
         });
-      
+
       expect(response.status).toBe(429);
       expect(response.body.success).toBe(false);
       expect(response.body.error).toContain('limit reached');
@@ -73,7 +73,7 @@ describe('B9: API Integration Tests', () => {
   describe('Missing / 404 Route', () => {
     it('GET /api/v1/nonexistent -> 404', async () => {
       const response = await request(app).get('/api/v1/nonexistent');
-      
+
       expect(response.status).toBe(404);
       expect(response.body.success).toBe(false);
       expect(response.body.error).toContain('API route not found');
